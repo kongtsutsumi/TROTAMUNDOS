@@ -2723,9 +2723,37 @@ function createQRCode(text, ecLevel) {
 
 
 // Genera un pitido corto con Web Audio API — sin depender de ningún archivo de audio externo.
+// Un solo AudioContext compartido, reutilizado en cada pitido — en iOS, el sonido necesita
+// "desbloquearse" con un toque real del usuario (ver unlockAudio, llamado desde el botón
+// "Iniciar"); crear un contexto nuevo cada vez puede quedar en silencio sin ese desbloqueo previo.
+let __sharedAudioCtx = null;
+function getAudioContext() {
+  if (!__sharedAudioCtx) {
+    try { __sharedAudioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+    catch (e) { return null; }
+  }
+  return __sharedAudioCtx;
+}
+function unlockAudio() {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  if (ctx.state === "suspended") ctx.resume().catch(() => {});
+  // sonido silencioso e inmediato, solo para "activar" el audio en este toque de usuario
+  try {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    gain.gain.value = 0;
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.01);
+  } catch (e) { /* no crítico */ }
+}
 function playBeep(freq = 880, durationMs = 180) {
   try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = getAudioContext();
+    if (!ctx) return;
+    if (ctx.state === "suspended") ctx.resume().catch(() => {});
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = "sine";
@@ -2736,7 +2764,6 @@ function playBeep(freq = 880, durationMs = 180) {
     gain.connect(ctx.destination);
     osc.start();
     osc.stop(ctx.currentTime + durationMs / 1000);
-    osc.onended = () => ctx.close();
   } catch (e) { /* audio no disponible, no es crítico */ }
 }
 function haversineKm(lat1, lon1, lat2, lon2) {
@@ -2809,7 +2836,7 @@ function LiveTrainingScreen({ day, easyPace, onClose, onComplete }) {
         if (cancelled) { lock.release().catch(() => {}); return; }
         wakeLockRef.current = lock;
         setWakeLockOn(true);
-        lock.addEventListener("release", () => setWakeLockOn(false));
+        lock.addEventListener("release", () => { wakeLockRef.current = null; setWakeLockOn(false); });
       } catch (e) { setWakeLockOn(false); }
     };
     const release = () => {
@@ -2881,9 +2908,9 @@ function LiveTrainingScreen({ day, easyPace, onClose, onComplete }) {
     setTotalKm((v) => v + km);
   };
 
-  const start = () => setStatus("running");
+  const start = () => { unlockAudio(); setStatus("running"); };
   const pause = () => setStatus("paused");
-  const resume = () => setStatus("running");
+  const resume = () => { unlockAudio(); setStatus("running"); };
   const finishNow = () => { setStatus("done"); playBeep(660, 220); };
 
   const avgPace = totalKm > 0.05 ? elapsedSec / 60 / totalKm : null;
