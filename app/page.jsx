@@ -800,6 +800,58 @@ function pickRepScheme(pool, distances, minReps, maxReps, recoveryKmFn) {
 
 // Calcula el mismo ritmo "representativo" que se muestra en el detalle de la sesión
 // (usa la distancia/duración real de esa sesión, no un valor genérico de referencia).
+// Arma la estructura de fases de una sesión para el modo "entrenamiento en vivo":
+// una lista de segmentos (warm-up, bloques, descansos, cool-down), cada uno con su
+// meta en distancia (o en tiempo cuando así corresponde), para poder avisar al
+// alumno en cada transición mientras entrena.
+function buildLiveSegments(day, easyP) {
+  const ep = easyP || 5;
+  const segs = [];
+  if (!day.paceKey || day.paceKey === "") return segs;
+
+  if (day.paceKey === "E") {
+    segs.push({ label: "Suave", type: "distance", target: day.km, pace: day.easyPace });
+    return segs;
+  }
+  if (day.paceKey === "long") {
+    segs.push({ label: "Fondo", type: "distance", target: day.km, pace: day.easyPace });
+    return segs;
+  }
+
+  let warmKm, coolKm;
+  if (day.km <= 5.5) { warmKm = r1(day.km * 0.4); coolKm = r1(day.km * 0.3); }
+  else { warmKm = 3; coolKm = 2; }
+
+  if (day.paceKey === "M" || day.paceKey === "T" || day.paceKey === "race") {
+    segs.push({ label: "Warm-up", type: "distance", target: warmKm, pace: day.easyPace });
+    const mainKm = r1(Math.max(0.5, day.km - warmKm - coolKm));
+    const pace = day.paceKey === "M" ? day.marathonPace : day.paceKey === "race" ? day.targetPace : day.targetPace;
+    segs.push({ label: "Bloque principal", type: "distance", target: mainKm, pace });
+    segs.push({ label: "Cool-down", type: "distance", target: coolKm, pace: day.easyPace });
+    return segs;
+  }
+
+  if (day.paceKey === "I" || day.paceKey === "R") {
+    const isI = day.paceKey === "I";
+    const d = day.distOverride || (isI ? 1 : 0.2);
+    const reps = day.repsOverride || (isI ? 6 : 8);
+    const pace = day.paceOverride || (isI ? getIPace(day.hmPace, day.marathonPace, d) : getRPace(day.targetPace, day.hmPace, d));
+    const recoveryMin = day.recoveryOverride ?? (isI ? getIRecoveryMin(d, ep) : (R_RECOVERY_MIN[d] ?? 2));
+    const recoveryKm = r1(ep ? recoveryMin / ep : recoveryMin / 5);
+    segs.push({ label: "Warm-up", type: "distance", target: warmKm, pace: day.easyPace });
+    for (let r = 1; r <= reps; r++) {
+      segs.push({ label: `Repetición ${r} de ${reps}`, type: "distance", target: d, pace });
+      if (r < reps) segs.push({ label: "Recuperación", type: "distance", target: recoveryKm, pace: day.easyPace });
+    }
+    segs.push({ label: "Cool-down", type: "distance", target: coolKm, pace: day.easyPace });
+    return segs;
+  }
+
+  // Tipos menos comunes (brokenT, custom, combo1k500, broken): un solo bloque continuo,
+  // menos preciso pero funcional.
+  segs.push({ label: day.type || "Entrenamiento", type: "distance", target: day.km || 5, pace: day.easyPace });
+  return segs;
+}
 function getRepresentativePace(day) {
   if (!day.paceKey) return null;
   if (day.paceOverride) return day.paceOverride;
@@ -2578,6 +2630,212 @@ function createQRCode(text, ecLevel) {
 }
 
 
+// Genera un pitido corto con Web Audio API — sin depender de ningún archivo de audio externo.
+function playBeep(freq = 880, durationMs = 180) {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0.25, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + durationMs / 1000);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + durationMs / 1000);
+    osc.onended = () => ctx.close();
+  } catch (e) { /* audio no disponible, no es crítico */ }
+}
+function haversineKm(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+function formatClock(totalSec) {
+  const h = Math.floor(totalSec / 3600), m = Math.floor((totalSec % 3600) / 60), s = Math.floor(totalSec % 60);
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`;
+}
+function LiveTrainingScreen({ day, easyPace, onClose, onComplete }) {
+  const segments = useMemo(() => buildLiveSegments(day, easyPace), [day, easyPace]);
+  const [status, setStatus] = useState("ready"); // ready | running | paused | done
+  const [segIdx, setSegIdx] = useState(0);
+  const [segDistanceKm, setSegDistanceKm] = useState(0);
+  const [totalKm, setTotalKm] = useState(0);
+  const [elapsedSec, setElapsedSec] = useState(0);
+  const [gpsMode, setGpsMode] = useState("pending"); // pending | real | manual | denied
+  const [flash, setFlash] = useState(null);
+  const lastPosRef = React.useRef(null);
+  const watchIdRef = React.useRef(null);
+  const timerRef = React.useRef(null);
+
+  const currentSeg = segments[segIdx];
+  const isLastSeg = segIdx >= segments.length - 1;
+
+  useEffect(() => {
+    if (status !== "running") return;
+    timerRef.current = setInterval(() => setElapsedSec((s) => s + 1), 1000);
+    return () => clearInterval(timerRef.current);
+  }, [status]);
+
+  useEffect(() => {
+    if (status !== "running") return;
+    if (!("geolocation" in navigator)) { setGpsMode("manual"); return; }
+    const id = navigator.geolocation.watchPosition(
+      (pos) => {
+        setGpsMode("real");
+        const { latitude, longitude } = pos.coords;
+        if (lastPosRef.current) {
+          const d = haversineKm(lastPosRef.current.lat, lastPosRef.current.lon, latitude, longitude);
+          if (d > 0.001 && d < 0.2) { // filtra saltos irreales de precisión GPS
+            setSegDistanceKm((v) => v + d);
+            setTotalKm((v) => v + d);
+          }
+        }
+        lastPosRef.current = { lat: latitude, lon: longitude };
+      },
+      () => setGpsMode((m) => (m === "real" ? m : "denied")),
+      { enableHighAccuracy: true, maximumAge: 2000, timeout: 8000 }
+    );
+    watchIdRef.current = id;
+    return () => { if (watchIdRef.current != null) navigator.geolocation.clearWatch(watchIdRef.current); };
+  }, [status]);
+
+  // avanzar de fase automáticamente al llegar a la meta del segmento actual
+  useEffect(() => {
+    if (status !== "running" || !currentSeg) return;
+    if (segDistanceKm >= (currentSeg.target || 0.05)) {
+      playBeep(isLastSeg ? 660 : 990, 220);
+      if (navigator.vibrate) navigator.vibrate(isLastSeg ? [200, 100, 200] : 200);
+      if (isLastSeg) {
+        setStatus("done");
+        setFlash("¡Entrenamiento completado!");
+      } else {
+        setSegIdx((i) => i + 1);
+        setSegDistanceKm(0);
+        setFlash(`Siguiente: ${segments[segIdx + 1]?.label}`);
+      }
+      setTimeout(() => setFlash(null), 3500);
+    }
+  }, [segDistanceKm, status]);
+
+  const addManualDistance = (km) => {
+    setSegDistanceKm((v) => v + km);
+    setTotalKm((v) => v + km);
+  };
+
+  const start = () => { setStatus("running"); if (gpsMode === "pending") setGpsMode("pending"); };
+  const pause = () => setStatus("paused");
+  const resume = () => setStatus("running");
+  const finishNow = () => { setStatus("done"); playBeep(660, 220); };
+
+  const avgPace = totalKm > 0.05 ? elapsedSec / 60 / totalKm : null;
+
+  if (status === "done") {
+    return (
+      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center px-6" style={{ background: COLORS.bg }}>
+        <Check size={48} style={{ color: COLORS.easy }} />
+        <h2 className="text-2xl font-bold mt-4 mb-1" style={{ fontFamily: "'Oswald', sans-serif", color: COLORS.textPrimary }}>¡Listo!</h2>
+        <p className="text-sm mb-6" style={{ color: COLORS.textMuted }}>Resumen de tu sesión</p>
+        <div className="grid grid-cols-3 gap-4 mb-8 w-full max-w-sm">
+          <div className="text-center">
+            <div className="text-2xl font-bold font-mono" style={{ color: COLORS.track }}>{r1(totalKm)}</div>
+            <div className="text-[10px] uppercase" style={{ color: COLORS.textMuted }}>km</div>
+          </div>
+          <div className="text-center">
+            <div className="text-2xl font-bold font-mono" style={{ color: COLORS.track }}>{formatClock(elapsedSec)}</div>
+            <div className="text-[10px] uppercase" style={{ color: COLORS.textMuted }}>tiempo</div>
+          </div>
+          <div className="text-center">
+            <div className="text-2xl font-bold font-mono" style={{ color: COLORS.track }}>{avgPace ? formatPace(avgPace) : "—"}</div>
+            <div className="text-[10px] uppercase" style={{ color: COLORS.textMuted }}>ritmo/km</div>
+          </div>
+        </div>
+        {gpsMode !== "real" && (
+          <p className="text-xs text-center mb-6 max-w-sm" style={{ color: COLORS.moderate }}>
+            El GPS no estuvo disponible en esta prueba — la distancia de arriba es simulada/manual, no una medición real.
+          </p>
+        )}
+        <div className="flex gap-3 w-full max-w-sm">
+          <button onClick={onClose} className="flex-1 px-4 py-3 rounded-lg text-sm font-semibold" style={{ background: COLORS.surface2, color: COLORS.lane }}>
+            Cerrar sin guardar
+          </button>
+          <button
+            onClick={() => onComplete({ actualKm: r1(totalKm), actualPaceStr: avgPace ? formatPace(avgPace) : "" })}
+            className="flex-1 px-4 py-3 rounded-lg text-sm font-semibold" style={{ background: COLORS.track, color: COLORS.lane }}>
+            Guardar como completado
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col" style={{ background: COLORS.bg }}>
+      <div className="flex items-center justify-between px-5 pt-5">
+        <button onClick={onClose} className="p-2 rounded-lg" style={{ color: COLORS.textMuted }}><X size={20} /></button>
+        <span className="text-xs uppercase tracking-wide" style={{ color: COLORS.textMuted }}>
+          {gpsMode === "real" ? "📍 GPS activo" : gpsMode === "denied" ? "⚠️ Sin GPS — modo manual" : gpsMode === "manual" ? "✋ Modo manual" : "Listo para empezar"}
+        </span>
+        <div style={{ width: 36 }} />
+      </div>
+
+      {flash && (
+        <div className="mx-5 mt-3 rounded-lg p-3 text-center text-sm font-semibold animate-fadein" style={{ background: COLORS.track, color: COLORS.lane }}>
+          {flash}
+        </div>
+      )}
+
+      <div className="flex-1 flex flex-col items-center justify-center px-6">
+        <div className="text-xs uppercase tracking-wide mb-2" style={{ color: COLORS.track }}>
+          Fase {segIdx + 1} de {segments.length}
+        </div>
+        <div className="text-3xl font-bold mb-1 text-center" style={{ fontFamily: "'Oswald', sans-serif", color: COLORS.textPrimary }}>
+          {currentSeg?.label}
+        </div>
+        {currentSeg?.pace && (
+          <div className="text-sm mb-8" style={{ color: COLORS.textMuted }}>Ritmo objetivo: {formatPace(currentSeg.pace)}/km</div>
+        )}
+
+        <div className="text-6xl font-bold font-mono mb-2" style={{ color: COLORS.lane }}>{formatClock(elapsedSec)}</div>
+        <div className="text-lg font-mono mb-1" style={{ color: COLORS.textMuted }}>
+          {r1(segDistanceKm)} / {r1(currentSeg?.target || 0)} km de esta fase
+        </div>
+        <div className="w-full max-w-xs h-2 rounded-full overflow-hidden mb-8" style={{ background: COLORS.surface2 }}>
+          <div className="h-full" style={{ width: `${Math.min(100, (segDistanceKm / (currentSeg?.target || 1)) * 100)}%`, background: COLORS.track }} />
+        </div>
+
+        {gpsMode !== "real" && status === "running" && (
+          <div className="flex gap-2 mb-6">
+            <button onClick={() => addManualDistance(0.1)} className="px-3 py-2 rounded-lg text-xs font-semibold" style={{ background: COLORS.surface2, color: COLORS.lane }}>+100 m</button>
+            <button onClick={() => addManualDistance(0.5)} className="px-3 py-2 rounded-lg text-xs font-semibold" style={{ background: COLORS.surface2, color: COLORS.lane }}>+500 m</button>
+            <button onClick={() => addManualDistance(1)} className="px-3 py-2 rounded-lg text-xs font-semibold" style={{ background: COLORS.surface2, color: COLORS.lane }}>+1 km</button>
+          </div>
+        )}
+
+        {status === "ready" && (
+          <button onClick={start} className="px-10 py-4 rounded-full text-base font-bold" style={{ background: COLORS.track, color: COLORS.lane }}>
+            Empezar
+          </button>
+        )}
+        {status === "running" && (
+          <div className="flex gap-3">
+            <button onClick={pause} className="px-6 py-3 rounded-full text-sm font-semibold" style={{ background: COLORS.surface2, color: COLORS.lane }}>Pausar</button>
+            <button onClick={finishNow} className="px-6 py-3 rounded-full text-sm font-semibold" style={{ background: COLORS.moderate, color: COLORS.lane }}>Terminar</button>
+          </div>
+        )}
+        {status === "paused" && (
+          <div className="flex gap-3">
+            <button onClick={resume} className="px-6 py-3 rounded-full text-sm font-semibold" style={{ background: COLORS.track, color: COLORS.lane }}>Reanudar</button>
+            <button onClick={finishNow} className="px-6 py-3 rounded-full text-sm font-semibold" style={{ background: COLORS.moderate, color: COLORS.lane }}>Terminar</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 function QRCodeSVG({ text, size = 220 }) {
   const qr = useMemo(() => {
     try { return createQRCode(text, QRErrorCorrectLevel.M); }
@@ -2808,7 +3066,7 @@ function ProgressChart({ student, activeWeekNum }) {
   );
 }
 
-function LapCard({ day, index, mode, log, onChangeDay, onChangeLog, isToday, isRaceGoal }) {
+function LapCard({ day, index, mode, log, onChangeDay, onChangeLog, isToday, isRaceGoal, onStartLive }) {
   const zone = ZONE_BY_PACEKEY[day.paceKey] || "rest";
   const zoneColor = ZONE_COLOR[zone];
   const isRest = !day.paceKey;
@@ -3116,11 +3374,19 @@ function LapCard({ day, index, mode, log, onChangeDay, onChangeLog, isToday, isR
                   <input type="checkbox" checked={!!log?.completed} onChange={(e) => onChangeLog(index, { ...log, completed: e.target.checked })} style={{ accentColor: COLORS.track }} />
                   Sesión completada
                 </label>
-                <button type="button"
-                  onClick={() => onChangeLog(index, { ...log, completed: true, actualKm: day.km, actualPaceStr: log?.actualPaceStr || (getRepresentativePace(day) ? formatPace(getRepresentativePace(day)) : "") })}
-                  className="text-xs px-2 py-1 rounded" style={{ background: COLORS.bg, color: COLORS.easy, border: `1px solid ${COLORS.easy}55` }}>
-                  ✓ Tal cual estaba planeado
-                </button>
+                <div className="flex items-center gap-2">
+                  {!log?.completed && onStartLive && (
+                    <button type="button" onClick={() => onStartLive(index)}
+                      className="flex items-center gap-1 text-xs px-2 py-1 rounded" style={{ background: COLORS.bg, color: COLORS.track, border: `1px solid ${COLORS.track}55` }}>
+                      <Activity size={11} /> En vivo
+                    </button>
+                  )}
+                  <button type="button"
+                    onClick={() => onChangeLog(index, { ...log, completed: true, actualKm: day.km, actualPaceStr: log?.actualPaceStr || (getRepresentativePace(day) ? formatPace(getRepresentativePace(day)) : "") })}
+                    className="text-xs px-2 py-1 rounded" style={{ background: COLORS.bg, color: COLORS.easy, border: `1px solid ${COLORS.easy}55` }}>
+                    ✓ Tal cual estaba planeado
+                  </button>
+                </div>
               </div>
               <div className={`grid gap-2 ${["R", "I", "T"].includes(day.paceKey) ? "grid-cols-3" : "grid-cols-2"}`}>
                 <div>
@@ -5060,6 +5326,20 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
     setBusy(false);
     setSaved(true);
   };
+  // Guarda de inmediato el resultado del "entrenamiento en vivo" — a diferencia del resto del
+  // registro manual, aquí tiene más sentido que quede guardado al toque, sin un paso extra.
+  const saveLiveTrainingResult = async (index, entry) => {
+    if (!student) return;
+    const wk = getActiveLogWeek(student);
+    const week = student.weeks[wk];
+    const log = week.log.map((l, i) => (i === index ? entry : l));
+    const updated = { ...student, weeks: { ...student.weeks, [wk]: { ...week, log } } };
+    setStudent(updated);
+    setBusy(true);
+    await safeSet(`student:${student.id}`, updated);
+    setBusy(false);
+    setSaved(true);
+  };
   const submitWeek = async () => {
     if (!student) return;
     setBusy(true);
@@ -5102,6 +5382,7 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
   const currentWeekData = student ? student.weeks[activeLogWeek] : null;
   const todayDowIndex = (new Date().getDay() + 6) % 7; // 0=Lunes ... 6=Domingo
   const [dismissedYesterdayReminder, setDismissedYesterdayReminder] = useState(false);
+  const [liveTrainingDayIdx, setLiveTrainingDayIdx] = useState(null);
   const yesterdayIdx = todayDowIndex - 1; // -1 si hoy es lunes: no hay día anterior que preguntar
   const yesterdayDay = isViewingCurrent && currentWeekData && yesterdayIdx >= 0 ? currentWeekData.plan[yesterdayIdx] : null;
   const yesterdayLog = isViewingCurrent && currentWeekData && yesterdayIdx >= 0 ? currentWeekData.log[yesterdayIdx] : null;
@@ -5221,8 +5502,27 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
           )}
 
           <div className="grid sm:grid-cols-2 gap-3 mb-4">
-            {week.plan.map((d, i) => <LapCard key={i} day={d} index={i} mode={!isViewingCurrent ? "view" : (waitingForCoach ? "view" : "log")} log={week.log[i]} onChangeLog={isViewingCurrent ? changeLog : undefined} isToday={isViewingCurrent && i === todayDowIndex} isRaceGoal={!isFitnessGoal(student.goal)} />)}
+            {week.plan.map((d, i) => <LapCard key={i} day={d} index={i} mode={!isViewingCurrent ? "view" : (waitingForCoach ? "view" : "log")} log={week.log[i]} onChangeLog={isViewingCurrent ? changeLog : undefined} isToday={isViewingCurrent && i === todayDowIndex} isRaceGoal={!isFitnessGoal(student.goal)} onStartLive={isViewingCurrent && !waitingForCoach ? (idx) => setLiveTrainingDayIdx(idx) : undefined} />)}
           </div>
+
+          {isViewingCurrent && !waitingForCoach && week.plan[todayDowIndex]?.paceKey && !week.log[todayDowIndex]?.completed && (
+            <button onClick={() => setLiveTrainingDayIdx(todayDowIndex)}
+              className="flex items-center justify-center gap-2 w-full px-4 py-3 rounded-lg text-sm font-bold mb-4"
+              style={{ background: COLORS.track, color: COLORS.lane }}>
+              <Activity size={16} /> Iniciar entrenamiento en vivo (hoy)
+            </button>
+          )}
+          {liveTrainingDayIdx != null && week.plan[liveTrainingDayIdx] && (
+            <LiveTrainingScreen
+              day={week.plan[liveTrainingDayIdx]}
+              easyPace={student.paces?.E}
+              onClose={() => setLiveTrainingDayIdx(null)}
+              onComplete={({ actualKm, actualPaceStr }) => {
+                saveLiveTrainingResult(liveTrainingDayIdx, { ...week.log[liveTrainingDayIdx], completed: true, actualKm, actualPaceStr });
+                setLiveTrainingDayIdx(null);
+              }}
+            />
+          )}
 
           <button onClick={() => exportWeekToPDF(student, week, activeWeekNum)}
             className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold mb-4"
@@ -5286,7 +5586,7 @@ function RoleSelect({ onSelect }) {
     <div className="max-w-2xl mx-auto px-4 py-16">
       <div className="text-center mb-12">
         <div className="text-5xl font-bold tracking-widest" style={{ fontFamily: "'Oswald', sans-serif", color: COLORS.lane, letterSpacing: "0.06em" }}>TROTAMUNDOS</div>
-        <div className="text-sm font-semibold tracking-[0.3em] uppercase mt-1" style={{ color: COLORS.track }}>el app · V.03</div>
+        <div className="text-sm font-semibold tracking-[0.3em] uppercase mt-1" style={{ color: COLORS.track }}>el app · V.04</div>
         <div className="w-16 h-1 mx-auto mt-3 mb-4" style={{ background: COLORS.track }} />
         <p className="text-sm" style={{ color: COLORS.textMuted }}>Tú cumples el plan, tu coach lo diseña semana a semana.</p>
       </div>
@@ -5335,14 +5635,14 @@ export default function App() {
 
   return (
     <div className="min-h-screen w-full" style={{ background: COLORS.bg }}>
-      <style dangerouslySetInnerHTML={{ __html: `
+      <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap');
         * { font-family: 'Inter', sans-serif; }
         @keyframes fadein { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
         .animate-fadein { animation: fadein 0.25s ease-out; }
         input:focus, select:focus, button:focus-visible { outline: 2px solid ${COLORS.track}; outline-offset: 1px; }
         @media (prefers-reduced-motion: reduce) { .animate-fadein { animation: none; } }
-      ` }} />
+      `}</style>
 
       {loading ? (
         <div className="flex items-center justify-center h-64" style={{ color: COLORS.textMuted }}>Cargando…</div>
