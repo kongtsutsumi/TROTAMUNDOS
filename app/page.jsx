@@ -2790,10 +2790,43 @@ function LiveTrainingScreen({ day, easyPace, onClose, onComplete }) {
   const lastPosRef = React.useRef(null);
   const watchIdRef = React.useRef(null);
   const timerRef = React.useRef(null);
+  const wakeLockRef = React.useRef(null);
+  const [wakeLockOn, setWakeLockOn] = useState(false);
 
   const isOpenPhase = segIdx >= segments.length;
   const currentSeg = isOpenPhase ? { label: "Fase final (libre)", type: "open" } : segments[segIdx];
   const isLastDefinedSeg = segIdx === segments.length - 1;
+
+  // Mantiene la pantalla encendida mientras el entrenamiento está corriendo o pausado, para que
+  // el cronómetro y las alertas de cada fase sigan funcionando (en iOS, con la pantalla apagada,
+  // el navegador deja de ejecutar el código en segundo plano). Se libera al cerrar o terminar.
+  useEffect(() => {
+    let cancelled = false;
+    const acquire = async () => {
+      if (!("wakeLock" in navigator)) return;
+      try {
+        const lock = await navigator.wakeLock.request("screen");
+        if (cancelled) { lock.release().catch(() => {}); return; }
+        wakeLockRef.current = lock;
+        setWakeLockOn(true);
+        lock.addEventListener("release", () => setWakeLockOn(false));
+      } catch (e) { setWakeLockOn(false); }
+    };
+    const release = () => {
+      if (wakeLockRef.current) { wakeLockRef.current.release().catch(() => {}); wakeLockRef.current = null; }
+      setWakeLockOn(false);
+    };
+    if (status === "running" || status === "paused") acquire();
+    else release();
+    // iOS libera el wake lock si la pestaña pierde visibilidad (cambiaste de app un momento) —
+    // lo volvemos a pedir apenas la app vuelve a estar visible.
+    const onVisibility = () => {
+      if (document.visibilityState === "visible" && (status === "running" || status === "paused") && !wakeLockRef.current) acquire();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => { cancelled = true; document.removeEventListener("visibilitychange", onVisibility); };
+  }, [status]);
+  useEffect(() => () => { if (wakeLockRef.current) wakeLockRef.current.release().catch(() => {}); }, []);
 
   useEffect(() => {
     if (status !== "running") return;
@@ -2901,9 +2934,16 @@ function LiveTrainingScreen({ day, easyPace, onClose, onComplete }) {
       )}
       <div className="flex items-center justify-between px-5 pt-5">
         <button onClick={onClose} className="p-2 rounded-lg" style={{ color: COLORS.textMuted }}><X size={20} /></button>
-        <span className="text-xs uppercase tracking-wide" style={{ color: COLORS.textMuted }}>
-          {gpsMode === "real" ? "📍 GPS activo" : gpsMode === "denied" ? "⚠️ Sin GPS — modo manual" : gpsMode === "manual" ? "✋ Modo manual" : "Listo para empezar"}
-        </span>
+        <div className="flex flex-col items-center gap-0.5">
+          <span className="text-xs uppercase tracking-wide" style={{ color: COLORS.textMuted }}>
+            {gpsMode === "real" ? "📍 GPS activo" : gpsMode === "denied" ? "⚠️ Sin GPS — modo manual" : gpsMode === "manual" ? "✋ Modo manual" : "Listo para empezar"}
+          </span>
+          {(status === "running" || status === "paused") && (
+            <span className="text-[10px]" style={{ color: wakeLockOn ? COLORS.easy : COLORS.moderate }}>
+              {wakeLockOn ? "🔆 Pantalla se mantiene encendida" : "⚠️ No se pudo evitar que la pantalla se apague"}
+            </span>
+          )}
+        </div>
         <div style={{ width: 36 }} />
       </div>
 
