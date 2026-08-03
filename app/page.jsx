@@ -4397,6 +4397,8 @@ function RitmosPanel({ student, onSave, busy }) {
 function CoachDashboard({ roster, refreshRoster, onBack }) {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState(null);
+  const [goalFilter, setGoalFilter] = useState("");
+  const [rosterProgress, setRosterProgress] = useState({});
   const [showDailyActivity, setShowDailyActivity] = useState(false);
   const [dailyActivity, setDailyActivity] = useState(null);
   const [activityStudentFilter, setActivityStudentFilter] = useState("");
@@ -4427,8 +4429,9 @@ function CoachDashboard({ roster, refreshRoster, onBack }) {
   const [showPaceAlerts, setShowPaceAlerts] = useState(false);
   const [showQR, setShowQR] = useState(false);
   const [showKmSummary, setShowKmSummary] = useState(false);
+  const [reportWeekNum, setReportWeekNum] = useState(null);
   const [kmGroupBy, setKmGroupBy] = useState("week");
-  const [qrUrl, setQrUrl] = useState("");
+  const [qrUrl, setQrUrl] = useState("https://trotamundos-seven.vercel.app");
   const [paceAlerts, setPaceAlerts] = useState([]);
   const [showPanorama, setShowPanorama] = useState(false);
   const [showRitmos, setShowRitmos] = useState(false);
@@ -4501,6 +4504,7 @@ function CoachDashboard({ roster, refreshRoster, onBack }) {
       const weekEntry = { weeklyKm: null, phase: "principiante", plan, log: emptyLog(), note: `Objetivo actualizado: ${GOAL_LABEL[goal]}.`, submitted: false };
       updated = {
         ...student, goal, raceDate: null, targetPaceStr: null, paces: {}, peakKm: null, peakLongKm: null,
+        volumeOverrides: {}, longRunOverrides: {}, qualityStreaks: { q1: 0, q2: 0 },
         weeksToRace: null, currentWeek: targetWeekNum, beginnerStage: 0,
         weeks: { ...student.weeks, [targetWeekNum]: weekEntry },
       };
@@ -4516,6 +4520,7 @@ function CoachDashboard({ roster, refreshRoster, onBack }) {
         : { ...existingTargetWeek, plan, note: `Objetivo actualizado: ${GOAL_LABEL[goal]}.` };
       updated = {
         ...student, goal, raceDate, targetPaceStr, paces, peakKm, currentWeek: targetWeekNum, weeksToRace: weeksBetween(raceDate),
+        volumeOverrides: {}, longRunOverrides: {}, qualityStreaks: { q1: 0, q2: 0 },
         weeks: { ...student.weeks, [targetWeekNum]: weekEntry },
       };
     } else {
@@ -4533,6 +4538,7 @@ function CoachDashboard({ roster, refreshRoster, onBack }) {
         : { ...existingTargetWeek, weeklyKm, phase, plan, note };
       updated = {
         ...student, goal, raceDate, targetPaceStr, paces, peakKm, peakLongKm, weeksToRace, currentWeek: targetWeekNum,
+        volumeOverrides: {}, longRunOverrides: {}, qualityStreaks: { q1: 0, q2: 0 },
         weeks: { ...student.weeks, [targetWeekNum]: weekEntry },
       };
     }
@@ -4595,6 +4601,8 @@ function CoachDashboard({ roster, refreshRoster, onBack }) {
   if (statusFilter === "waiting") filteredRoster = filteredRoster.filter((r) => r.waitingApproval);
   else if (statusFilter === "low") filteredRoster = filteredRoster.filter((r) => r.lastAdherence != null && r.lastAdherence < 0.7);
   else if (statusFilter === "paused") filteredRoster = filteredRoster.filter((r) => r.paused);
+  if (goalFilter) filteredRoster = filteredRoster.filter((r) => r.goal === goalFilter);
+  filteredRoster = [...filteredRoster].sort((a, b) => a.name.localeCompare(b.name, "es"));
 
   const loadDailyActivity = async () => {
     setLoadingActivity(true);
@@ -4627,6 +4635,24 @@ function CoachDashboard({ roster, refreshRoster, onBack }) {
     setDailyActivity(rows);
     setLoadingActivity(false);
   };
+
+  // Cuántos entrenos lleva registrados cada alumno esta semana (ej. "3 de 5") — se carga sola
+  // cada vez que cambia la lista de alumnos, sin bloquear el resto del panel.
+  const loadRosterProgress = useCallback(async () => {
+    const entries = {};
+    for (const r of roster) {
+      const s = await safeGet(`student:${r.id}`);
+      if (!s) continue;
+      const wk = s.currentWeek;
+      const week = s.weeks[wk];
+      if (!week) continue;
+      const slots = (week.plan || []).filter((d) => !!d.paceKey);
+      const completed = slots.filter((d, i) => week.log?.[i]?.completed).length;
+      entries[r.id] = { completed, total: slots.length };
+    }
+    setRosterProgress(entries);
+  }, [roster]);
+  useEffect(() => { loadRosterProgress(); }, [roster]);
 
   const createStudent = async ({ name, goal, level, pin, raceDate, targetPaceStr, peakKmOverride, fitnessStartWeek, planTiming, trainDays }) => {
     if (busy) return; // segunda capa: evita crear dos veces si algo dispara la acción por duplicado
@@ -5189,6 +5215,11 @@ function CoachDashboard({ roster, refreshRoster, onBack }) {
 
           {roster.length > 0 && (
             <div className="flex flex-wrap gap-2 mb-3">
+              <button onClick={loadRosterProgress} title="Actualizar progreso semanal de todos los alumnos"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold"
+                style={{ background: COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
+                <RefreshCcw size={12} /> Actualizar progreso
+              </button>
               <button onClick={() => setStatusFilter(statusFilter === "waiting" ? null : "waiting")}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold"
                 style={{ background: statusFilter === "waiting" ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.track}55` }}>
@@ -5204,8 +5235,13 @@ function CoachDashboard({ roster, refreshRoster, onBack }) {
                 style={{ background: statusFilter === "paused" ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.track}55` }}>
                 ⏸ {pausedCount} pausados
               </button>
-              {statusFilter && (
-                <button onClick={() => setStatusFilter(null)} className="text-xs underline" style={{ color: COLORS.textMuted }}>
+              <select value={goalFilter} onChange={(e) => setGoalFilter(e.target.value)}
+                className="px-3 py-1.5 rounded-full text-xs font-semibold" style={{ background: goalFilter ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.track}55` }}>
+                <option value="">Todos los objetivos</option>
+                {GOALS.map((g) => <option key={g.id} value={g.id}>{g.label}</option>)}
+              </select>
+              {(statusFilter || goalFilter) && (
+                <button onClick={() => { setStatusFilter(null); setGoalFilter(""); }} className="text-xs underline" style={{ color: COLORS.textMuted }}>
                   Quitar filtro
                 </button>
               )}
@@ -5236,6 +5272,11 @@ function CoachDashboard({ roster, refreshRoster, onBack }) {
                   </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0 ml-2">
+                  {rosterProgress[r.id] && rosterProgress[r.id].total > 0 && (
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded" style={{ background: COLORS.bg, color: COLORS.textMuted, border: `1px solid ${COLORS.border}` }}>
+                      {rosterProgress[r.id].completed} de {rosterProgress[r.id].total}
+                    </span>
+                  )}
                   <AdherenceBadge pct={r.lastAdherence} />
                   {selectedId === r.id ? <ChevronDown size={14} style={{ color: COLORS.track }} /> : <ChevronRight size={14} style={{ color: COLORS.textMuted }} />}
                 </div>
@@ -5314,6 +5355,11 @@ function CoachDashboard({ roster, refreshRoster, onBack }) {
                       <Pill color={COLORS.lane}>{GOAL_LABEL[student.goal]}</Pill>
                       <Pill color={COLORS.lane}>{LEVEL_LABEL[student.level]}</Pill>
                       {student.targetPaceStr && <Pill color={COLORS.lane}>Objetivo: {student.targetPaceStr}/km</Pill>}
+                      <button onClick={() => setShowChangeGoal((v) => !v)}
+                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold"
+                        style={{ background: showChangeGoal ? COLORS.track : COLORS.bg, color: COLORS.lane, border: `1px solid ${COLORS.track}55` }}>
+                        <Edit3 size={11} /> Cambiar objetivo
+                      </button>
                     </div>
                   )}
                 </div>
@@ -5395,11 +5441,6 @@ function CoachDashboard({ roster, refreshRoster, onBack }) {
                       <RefreshCcw size={14} /> Actualizar títulos
                     </button>
                   )}
-                  <button onClick={() => setShowChangeGoal((v) => !v)}
-                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold"
-                    style={{ background: showChangeGoal ? COLORS.track : COLORS.bg, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
-                    <Edit3 size={14} /> Cambiar objetivo
-                  </button>
                   {isViewingLive && student.level !== "principiante" && (
                     <button onClick={togglePauseWeek} disabled={busy}
                       className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold"
@@ -5534,9 +5575,18 @@ function CoachDashboard({ roster, refreshRoster, onBack }) {
                 <button onClick={() => exportWeekToPDF(student, week, activeWeekNum)} className="flex items-center gap-2 text-sm px-4 py-2 rounded-lg font-semibold" style={{ background: COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
                   <Download size={14} /> Exportar a PDF
                 </button>
-                <button onClick={() => exportWeeklyReport(student, week, activeWeekNum)} className="flex items-center gap-2 text-sm px-4 py-2 rounded-lg font-semibold" style={{ background: COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
-                  <FileText size={14} /> Reporte semanal
-                </button>
+                <div className="flex items-center gap-1.5">
+                  <select value={reportWeekNum ?? activeWeekNum} onChange={(e) => setReportWeekNum(Number(e.target.value))}
+                    className="text-sm px-2 py-2 rounded-lg" style={{ background: COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
+                    {Object.keys(student.weeks).map(Number).sort((a, b) => a - b).map((n) => (
+                      <option key={n} value={n}>Semana {n}</option>
+                    ))}
+                  </select>
+                  <button onClick={() => exportWeeklyReport(student, student.weeks[reportWeekNum ?? activeWeekNum], reportWeekNum ?? activeWeekNum)}
+                    className="flex items-center gap-2 text-sm px-4 py-2 rounded-lg font-semibold" style={{ background: COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
+                    <FileText size={14} /> Reporte semanal
+                  </button>
+                </div>
                 <button onClick={() => exportFullPlanOverview(student)} className="flex items-center gap-2 text-sm px-4 py-2 rounded-lg font-semibold" style={{ background: COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
                   <BarChart2 size={14} /> Resumen del plan completo
                 </button>
