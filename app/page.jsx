@@ -809,25 +809,95 @@ function buildLiveSegments(day, easyP) {
   const segs = [];
   if (!day.paceKey || day.paceKey === "") return segs;
 
+  let warmKm, coolKm;
+  if ((day.km || 0) <= 5.5) { warmKm = r1((day.km || 0) * 0.4); coolKm = r1((day.km || 0) * 0.3); }
+  else { warmKm = 3; coolKm = 2; }
+
+  // Run/Walk o continuo de nivel principiante/fitness: todo por tiempo, igual que se describe
+  // en el detalle de la sesión (caminar de calentamiento, bloques de trote/caminata, cool-down).
+  if (day.paceKey === "E" && day.stageLabel) {
+    segs.push({ label: "Warm-up (caminando)", type: "time", target: BEGINNER_WARMUP_MIN, pace: null });
+    if (day.runWalk) {
+      for (let r = 1; r <= day.stageReps; r++) {
+        segs.push({ label: `Trote ${r} de ${day.stageReps}`, type: "time", target: day.stageRun, pace: day.easyPace });
+        segs.push({ label: "Caminata", type: "time", target: day.stageWalk, pace: null });
+      }
+    } else {
+      segs.push({ label: "Continuo", type: "time", target: day.stageRun, pace: day.easyPace });
+    }
+    segs.push({ label: "Cool-down (caminando)", type: "time", target: BEGINNER_COOLDOWN_MIN, pace: null });
+    return segs;
+  }
+  if (day.paceKey === "E" && day.isSpeedDay) {
+    segs.push({ label: "Trote suave", type: "time", target: 11, pace: day.easyPace });
+    for (let r = 1; r <= 5; r++) {
+      segs.push({ label: `Velocidad suave ${r} de 5`, type: "time", target: 20 / 60, pace: null });
+      if (r < 5) segs.push({ label: "Caminata", type: "time", target: 1, pace: null });
+    }
+    segs.push({ label: "Cool-down (caminando)", type: "time", target: 5, pace: null });
+    return segs;
+  }
   if (day.paceKey === "E") {
     segs.push({ label: "Suave", type: "distance", target: day.km, pace: day.easyPace });
     return segs;
   }
   if (day.paceKey === "long") {
+    if (day.longProgressive) {
+      const fastSeg = day.longFastKm ?? 5;
+      const bodyKm = r1(Math.max(0.5, day.km - warmKm - coolKm - fastSeg));
+      segs.push({ label: "Warm-up", type: "distance", target: warmKm, pace: day.easyPace });
+      segs.push({ label: "Bloque principal", type: "distance", target: bodyKm, pace: day.easyPace });
+      segs.push({ label: "Cierre fuerte", type: "distance", target: fastSeg, pace: day.marathonPace });
+      segs.push({ label: "Cool-down", type: "distance", target: coolKm, pace: day.easyPace });
+      return segs;
+    }
     segs.push({ label: "Fondo", type: "distance", target: day.km, pace: day.easyPace });
     return segs;
   }
 
-  let warmKm, coolKm;
-  if (day.km <= 5.5) { warmKm = r1(day.km * 0.4); coolKm = r1(day.km * 0.3); }
-  else { warmKm = 3; coolKm = 2; }
-
-  if (day.paceKey === "M" || day.paceKey === "T" || day.paceKey === "race") {
+  if (day.paceKey === "M" || day.paceKey === "race") {
     segs.push({ label: "Warm-up", type: "distance", target: warmKm, pace: day.easyPace });
     const mainKm = r1(Math.max(0.5, day.km - warmKm - coolKm));
-    const pace = day.paceKey === "M" ? day.marathonPace : day.paceKey === "race" ? day.targetPace : day.targetPace;
-    segs.push({ label: "Bloque principal", type: "distance", target: mainKm, pace });
+    segs.push({ label: "Bloque principal", type: "distance", target: mainKm, pace: day.paceKey === "M" ? day.marathonPace : day.targetPace });
     segs.push({ label: "Cool-down", type: "distance", target: coolKm, pace: day.easyPace });
+    return segs;
+  }
+
+  // Umbral continuo: el warm-up/cool-down son por distancia, pero el bloque principal se define
+  // por minutos (igual que en el detalle de la sesión).
+  if (day.paceKey === "T") {
+    const main = r1(Math.max(0.5, day.km - warmKm - coolKm));
+    let block = day.distOverride;
+    if (!block) {
+      let bestDiff = Infinity;
+      for (const t of T_DURATIONS) {
+        const adjPaceTmp = getTPaceForDuration(day.hmPace, day.marathonPace, t);
+        const impliedKm = adjPaceTmp ? t / adjPaceTmp : t / 3.5;
+        const diff = Math.abs(impliedKm - main);
+        if (diff < bestDiff) { bestDiff = diff; block = t; }
+      }
+    }
+    const adjPace = day.paceOverride || getTPaceForDuration(day.hmPace, day.marathonPace, block);
+    segs.push({ label: "Warm-up", type: "distance", target: warmKm, pace: day.easyPace });
+    segs.push({ label: "Bloque principal", type: "time", target: block, pace: adjPace });
+    segs.push({ label: "Cool-down", type: "distance", target: coolKm, pace: day.easyPace });
+    return segs;
+  }
+
+  // Umbral fraccionado: warm-up/cool-down por distancia, los bloques de trabajo y su
+  // recuperación se definen en minutos.
+  if (day.paceKey === "brokenT") {
+    const workMin = day.distOverride || 8;
+    const refMin = day.brokenTRefMin || 25;
+    const recoveryMin = day.recoveryOverride ?? 3;
+    const reps = day.repsOverride || 3;
+    const pace = day.paceOverride || getTPaceForDuration(day.hmPace, day.marathonPace, refMin);
+    segs.push({ label: "Warm-up", type: "distance", target: 3, pace: day.easyPace });
+    for (let r = 1; r <= reps; r++) {
+      segs.push({ label: `Bloque ${r} de ${reps}`, type: "time", target: workMin, pace });
+      if (r < reps) segs.push({ label: "Recuperación", type: "time", target: recoveryMin, pace: null });
+    }
+    segs.push({ label: "Cool-down", type: "distance", target: 2, pace: day.easyPace });
     return segs;
   }
 
@@ -847,7 +917,7 @@ function buildLiveSegments(day, easyP) {
     return segs;
   }
 
-  // Tipos menos comunes (brokenT, custom, combo1k500, broken): un solo bloque continuo,
+  // Tipos menos comunes (custom, combo1k500, broken): un solo bloque continuo,
   // menos preciso pero funcional.
   segs.push({ label: day.type || "Entrenamiento", type: "distance", target: day.km || 5, pace: day.easyPace });
   return segs;
@@ -2658,25 +2728,54 @@ function formatClock(totalSec) {
   const h = Math.floor(totalSec / 3600), m = Math.floor((totalSec % 3600) / 60), s = Math.floor(totalSec % 60);
   return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`;
 }
+function PhaseOverviewStrip({ segments, currentIdx }) {
+  return (
+    <div className="w-full overflow-x-auto mb-4">
+      <div className="flex gap-1.5 px-1 pb-1" style={{ minWidth: "max-content" }}>
+        {segments.map((s, i) => (
+          <div key={i}
+            className="flex flex-col items-center justify-center rounded-lg px-2.5 py-1.5 text-[10px] font-semibold whitespace-nowrap"
+            style={{
+              background: i === currentIdx ? COLORS.track : i < currentIdx ? COLORS.surface2 : COLORS.bg,
+              color: i === currentIdx ? COLORS.lane : i < currentIdx ? COLORS.textMuted : COLORS.textMuted,
+              border: `1px solid ${i === currentIdx ? COLORS.track : COLORS.border}`,
+              opacity: i < currentIdx ? 0.6 : 1,
+            }}>
+            <span>{i + 1}. {s.label}</span>
+            <span style={{ opacity: 0.8 }}>{s.type === "time" ? `${s.target < 1 ? Math.round(s.target * 60) + "s" : s.target + "'"}` : `${s.target} km`}</span>
+          </div>
+        ))}
+        <div className="flex flex-col items-center justify-center rounded-lg px-2.5 py-1.5 text-[10px] font-semibold whitespace-nowrap"
+          style={{ background: currentIdx >= segments.length ? COLORS.track : COLORS.bg, color: currentIdx >= segments.length ? COLORS.lane : COLORS.textMuted, border: `1px solid ${COLORS.border}` }}>
+          <span>{segments.length + 1}. Libre</span>
+          <span style={{ opacity: 0.8 }}>hasta Terminar</span>
+        </div>
+      </div>
+    </div>
+  );
+}
 function LiveTrainingScreen({ day, easyPace, onClose, onComplete }) {
   const segments = useMemo(() => buildLiveSegments(day, easyPace), [day, easyPace]);
   const [status, setStatus] = useState("ready"); // ready | running | paused | done
-  const [segIdx, setSegIdx] = useState(0);
+  const [segIdx, setSegIdx] = useState(0); // segments.length o mas = fase final libre
   const [segDistanceKm, setSegDistanceKm] = useState(0);
+  const [segElapsedSec, setSegElapsedSec] = useState(0);
   const [totalKm, setTotalKm] = useState(0);
   const [elapsedSec, setElapsedSec] = useState(0);
   const [gpsMode, setGpsMode] = useState("pending"); // pending | real | manual | denied
   const [flash, setFlash] = useState(null);
+  const [screenFlash, setScreenFlash] = useState(false);
   const lastPosRef = React.useRef(null);
   const watchIdRef = React.useRef(null);
   const timerRef = React.useRef(null);
 
-  const currentSeg = segments[segIdx];
-  const isLastSeg = segIdx >= segments.length - 1;
+  const isOpenPhase = segIdx >= segments.length;
+  const currentSeg = isOpenPhase ? { label: "Fase final (libre)", type: "open" } : segments[segIdx];
+  const isLastDefinedSeg = segIdx === segments.length - 1;
 
   useEffect(() => {
     if (status !== "running") return;
-    timerRef.current = setInterval(() => setElapsedSec((s) => s + 1), 1000);
+    timerRef.current = setInterval(() => { setElapsedSec((s) => s + 1); setSegElapsedSec((s) => s + 1); }, 1000);
     return () => clearInterval(timerRef.current);
   }, [status]);
 
@@ -2703,30 +2802,31 @@ function LiveTrainingScreen({ day, easyPace, onClose, onComplete }) {
     return () => { if (watchIdRef.current != null) navigator.geolocation.clearWatch(watchIdRef.current); };
   }, [status]);
 
-  // avanzar de fase automáticamente al llegar a la meta del segmento actual
+  // avanzar de fase automáticamente al llegar a la meta del segmento actual (por tiempo o
+  // por distancia, según corresponda) — al terminar la última fase definida, pasa a una fase
+  // final libre que solo se cierra al presionar "Terminar".
   useEffect(() => {
-    if (status !== "running" || !currentSeg) return;
-    if (segDistanceKm >= (currentSeg.target || 0.05)) {
-      playBeep(isLastSeg ? 660 : 990, 220);
-      if (navigator.vibrate) navigator.vibrate(isLastSeg ? [200, 100, 200] : 200);
-      if (isLastSeg) {
-        setStatus("done");
-        setFlash("¡Entrenamiento completado!");
-      } else {
-        setSegIdx((i) => i + 1);
-        setSegDistanceKm(0);
-        setFlash(`Siguiente: ${segments[segIdx + 1]?.label}`);
-      }
+    if (status !== "running" || isOpenPhase || !currentSeg) return;
+    const reached = currentSeg.type === "time" ? segElapsedSec >= (currentSeg.target || 0.1) * 60 : segDistanceKm >= (currentSeg.target || 0.05);
+    if (reached) {
+      playBeep(isLastDefinedSeg ? 660 : 990, 220);
+      if (navigator.vibrate) navigator.vibrate(isLastDefinedSeg ? [200, 100, 200] : 200);
+      setScreenFlash(true);
+      setTimeout(() => setScreenFlash(false), 500);
+      setSegIdx((i) => i + 1);
+      setSegDistanceKm(0);
+      setSegElapsedSec(0);
+      setFlash(isLastDefinedSeg ? "¡Fase final! Sigue acumulando o presiona Terminar cuando quieras." : `Siguiente: ${segments[segIdx + 1]?.label}`);
       setTimeout(() => setFlash(null), 3500);
     }
-  }, [segDistanceKm, status]);
+  }, [segDistanceKm, segElapsedSec, status]);
 
   const addManualDistance = (km) => {
     setSegDistanceKm((v) => v + km);
     setTotalKm((v) => v + km);
   };
 
-  const start = () => { setStatus("running"); if (gpsMode === "pending") setGpsMode("pending"); };
+  const start = () => setStatus("running");
   const pause = () => setStatus("paused");
   const resume = () => setStatus("running");
   const finishNow = () => { setStatus("done"); playBeep(660, 220); };
@@ -2774,6 +2874,9 @@ function LiveTrainingScreen({ day, easyPace, onClose, onComplete }) {
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col" style={{ background: COLORS.bg }}>
+      {screenFlash && (
+        <div className="fixed inset-0 z-[60] pointer-events-none" style={{ background: COLORS.track, animation: "screenFlashPulse 0.5s ease-out" }} />
+      )}
       <div className="flex items-center justify-between px-5 pt-5">
         <button onClick={onClose} className="p-2 rounded-lg" style={{ color: COLORS.textMuted }}><X size={20} /></button>
         <span className="text-xs uppercase tracking-wide" style={{ color: COLORS.textMuted }}>
@@ -2782,15 +2885,19 @@ function LiveTrainingScreen({ day, easyPace, onClose, onComplete }) {
         <div style={{ width: 36 }} />
       </div>
 
+      <div className="px-3 pt-3">
+        <PhaseOverviewStrip segments={segments} currentIdx={segIdx} />
+      </div>
+
       {flash && (
-        <div className="mx-5 mt-3 rounded-lg p-3 text-center text-sm font-semibold animate-fadein" style={{ background: COLORS.track, color: COLORS.lane }}>
+        <div className="mx-5 mt-1 rounded-lg p-3 text-center text-sm font-semibold animate-fadein" style={{ background: COLORS.track, color: COLORS.lane }}>
           {flash}
         </div>
       )}
 
       <div className="flex-1 flex flex-col items-center justify-center px-6">
         <div className="text-xs uppercase tracking-wide mb-2" style={{ color: COLORS.track }}>
-          Fase {segIdx + 1} de {segments.length}
+          {isOpenPhase ? "Fase libre" : `Fase ${segIdx + 1} de ${segments.length}`}
         </div>
         <div className="text-3xl font-bold mb-1 text-center" style={{ fontFamily: "'Oswald', sans-serif", color: COLORS.textPrimary }}>
           {currentSeg?.label}
@@ -2798,14 +2905,33 @@ function LiveTrainingScreen({ day, easyPace, onClose, onComplete }) {
         {currentSeg?.pace && (
           <div className="text-sm mb-8" style={{ color: COLORS.textMuted }}>Ritmo objetivo: {formatPace(currentSeg.pace)}/km</div>
         )}
+        {!currentSeg?.pace && <div className="mb-8" />}
 
         <div className="text-6xl font-bold font-mono mb-2" style={{ color: COLORS.lane }}>{formatClock(elapsedSec)}</div>
-        <div className="text-lg font-mono mb-1" style={{ color: COLORS.textMuted }}>
-          {r1(segDistanceKm)} / {r1(currentSeg?.target || 0)} km de esta fase
-        </div>
-        <div className="w-full max-w-xs h-2 rounded-full overflow-hidden mb-8" style={{ background: COLORS.surface2 }}>
-          <div className="h-full" style={{ width: `${Math.min(100, (segDistanceKm / (currentSeg?.target || 1)) * 100)}%`, background: COLORS.track }} />
-        </div>
+
+        {isOpenPhase ? (
+          <div className="text-lg font-mono mb-1" style={{ color: COLORS.textMuted }}>
+            {formatClock(segElapsedSec)} · {r1(segDistanceKm)} km en esta fase
+          </div>
+        ) : currentSeg?.type === "time" ? (
+          <div className="text-lg font-mono mb-1" style={{ color: COLORS.textMuted }}>
+            {formatClock(segElapsedSec)} / {formatClock((currentSeg?.target || 0) * 60)} de esta fase
+          </div>
+        ) : (
+          <div className="text-lg font-mono mb-1" style={{ color: COLORS.textMuted }}>
+            {r1(segDistanceKm)} / {r1(currentSeg?.target || 0)} km de esta fase
+          </div>
+        )}
+
+        {!isOpenPhase && (
+          <div className="w-full max-w-xs h-2 rounded-full overflow-hidden mb-8" style={{ background: COLORS.surface2 }}>
+            <div className="h-full" style={{
+              width: `${Math.min(100, currentSeg?.type === "time" ? (segElapsedSec / ((currentSeg?.target || 1) * 60)) * 100 : (segDistanceKm / (currentSeg?.target || 1)) * 100)}%`,
+              background: COLORS.track,
+            }} />
+          </div>
+        )}
+        {isOpenPhase && <div className="mb-8" />}
 
         {gpsMode !== "real" && status === "running" && (
           <div className="flex gap-2 mb-6">
@@ -2817,7 +2943,7 @@ function LiveTrainingScreen({ day, easyPace, onClose, onComplete }) {
 
         {status === "ready" && (
           <button onClick={start} className="px-10 py-4 rounded-full text-base font-bold" style={{ background: COLORS.track, color: COLORS.lane }}>
-            Empezar
+            Iniciar
           </button>
         )}
         {status === "running" && (
@@ -3378,7 +3504,7 @@ function LapCard({ day, index, mode, log, onChangeDay, onChangeLog, isToday, isR
                   {!log?.completed && onStartLive && (
                     <button type="button" onClick={() => onStartLive(index)}
                       className="flex items-center gap-1 text-xs px-2 py-1 rounded" style={{ background: COLORS.bg, color: COLORS.track, border: `1px solid ${COLORS.track}55` }}>
-                      <Activity size={11} /> En vivo
+                      <Activity size={11} /> Iniciar
                     </button>
                   )}
                   <button type="button"
@@ -5501,17 +5627,24 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
             </div>
           )}
 
+          {isViewingCurrent && !waitingForCoach && week.plan[todayDowIndex]?.paceKey && !week.log[todayDowIndex]?.completed && (
+            <button onClick={() => setLiveTrainingDayIdx(todayDowIndex)}
+              className="w-full rounded-xl p-4 mb-4 flex items-center gap-3 text-left animate-fadein"
+              style={{ background: COLORS.track, border: `2px solid ${COLORS.track}`, boxShadow: `0 0 0 4px ${COLORS.track}33` }}>
+              <div className="flex items-center justify-center rounded-full flex-shrink-0" style={{ width: 48, height: 48, background: "rgba(255,255,255,0.2)" }}>
+                <Activity size={24} style={{ color: COLORS.lane }} />
+              </div>
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-widest mb-0.5" style={{ color: COLORS.lane, opacity: 0.85 }}>Hoy · te toca esto</div>
+                <div className="text-base font-bold" style={{ color: COLORS.lane, fontFamily: "'Oswald', sans-serif" }}>Iniciar entrenamiento en vivo</div>
+              </div>
+            </button>
+          )}
+
           <div className="grid sm:grid-cols-2 gap-3 mb-4">
             {week.plan.map((d, i) => <LapCard key={i} day={d} index={i} mode={!isViewingCurrent ? "view" : (waitingForCoach ? "view" : "log")} log={week.log[i]} onChangeLog={isViewingCurrent ? changeLog : undefined} isToday={isViewingCurrent && i === todayDowIndex} isRaceGoal={!isFitnessGoal(student.goal)} onStartLive={isViewingCurrent && !waitingForCoach ? (idx) => setLiveTrainingDayIdx(idx) : undefined} />)}
           </div>
 
-          {isViewingCurrent && !waitingForCoach && week.plan[todayDowIndex]?.paceKey && !week.log[todayDowIndex]?.completed && (
-            <button onClick={() => setLiveTrainingDayIdx(todayDowIndex)}
-              className="flex items-center justify-center gap-2 w-full px-4 py-3 rounded-lg text-sm font-bold mb-4"
-              style={{ background: COLORS.track, color: COLORS.lane }}>
-              <Activity size={16} /> Iniciar entrenamiento en vivo (hoy)
-            </button>
-          )}
           {liveTrainingDayIdx != null && week.plan[liveTrainingDayIdx] && (
             <LiveTrainingScreen
               day={week.plan[liveTrainingDayIdx]}
@@ -5639,6 +5772,7 @@ export default function App() {
         @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap');
         * { font-family: 'Inter', sans-serif; }
         @keyframes fadein { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes screenFlashPulse { 0% { opacity: 0.85; } 100% { opacity: 0; } }
         .animate-fadein { animation: fadein 0.25s ease-out; }
         input:focus, select:focus, button:focus-visible { outline: 2px solid ${COLORS.track}; outline-offset: 1px; }
         @media (prefers-reduced-motion: reduce) { .animate-fadein { animation: none; } }
