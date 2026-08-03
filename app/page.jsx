@@ -828,11 +828,33 @@ function buildLiveSegments(day, easyP) {
     segs.push({ label: "Cool-down (caminando)", type: "time", target: BEGINNER_COOLDOWN_MIN, pace: null });
     return segs;
   }
+  // Run/Walk de los planes de carrera (10K/21K/42K, no principiante/fitness): bloques de trote
+  // + caminata según la duración total de la sesión, más los strides finales como fases propias.
+  if (day.paceKey === "E" && day.runWalk) {
+    const totalMin = day.targetPace ? Math.round((day.km || 0) * day.targetPace) : Math.round((day.km || 0) * 7);
+    let blockMin = 12;
+    if (totalMin > 75) blockMin = 20;
+    else if (totalMin > 60) blockMin = 18;
+    else if (totalMin > 50) blockMin = 15;
+    else if (totalMin > 40) blockMin = 14;
+    else if (totalMin > 30) blockMin = 13;
+    let reps = Math.max(2, Math.round(totalMin / (blockMin + 1)));
+    if (day.isMondayRecovery) { blockMin = Math.min(blockMin, 15); reps = Math.min(reps, 3); }
+    for (let r = 1; r <= reps; r++) {
+      segs.push({ label: `Trote ${r} de ${reps}`, type: "time", target: blockMin, pace: day.easyPace });
+      segs.push({ label: "Caminata", type: "time", target: 1, pace: null });
+    }
+    for (let s = 1; s <= 3; s++) {
+      segs.push({ label: `Stride ${s} de 3`, type: "time", target: 20 / 60, pace: null });
+      segs.push({ label: "Caminata", type: "time", target: 1, pace: null });
+    }
+    return segs;
+  }
   if (day.paceKey === "E" && day.isSpeedDay) {
     segs.push({ label: "Trote suave", type: "time", target: 11, pace: day.easyPace });
     for (let r = 1; r <= 5; r++) {
       segs.push({ label: `Velocidad suave ${r} de 5`, type: "time", target: 20 / 60, pace: null });
-      if (r < 5) segs.push({ label: "Caminata", type: "time", target: 1, pace: null });
+      segs.push({ label: "Caminata", type: "time", target: 1, pace: null });
     }
     segs.push({ label: "Cool-down (caminando)", type: "time", target: 5, pace: null });
     return segs;
