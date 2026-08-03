@@ -143,11 +143,11 @@ function getDayVariant(stage, posIndex, totalDays) {
 }
 const VARIANT_LABEL = { corto: "corto", variante: "variante", medio: "medio", principal: "principal" };
 
-function buildBeginnerPlan(stageIndex, goalId, level) {
+function buildBeginnerPlan(stageIndex, goalId, level, customTrainDays) {
   const stages = getStageTable(goalId);
   const idx = Math.min(stageIndex, stages.length - 1);
   const stage = stages[idx];
-  const trainDays = getRunWalkTrainDays(level);
+  const trainDays = customTrainDays && customTrainDays.length ? customTrainDays : getRunWalkTrainDays(level);
   const inFinalBlock = idx >= stages.length - 4; // último bloque de 4 semanas: posible día de velocidad
   const speedDayIndex = inFinalBlock ? trainDays[0] : -1; // el primer día entrenado de la semana
   return DAYS.map((day, i) => {
@@ -1865,7 +1865,7 @@ function finalizeWeekPlan(student, proposal, confirmed) {
         ? " ¡Tu alumno ya completó el plan! Ya puede correr de forma continua sin mayor dificultad."
         : " ¡Tu alumno ya puede correr 5K continuos! Considera cambiar su nivel.";
     }
-    const newPlan = buildBeginnerPlan(nextStage, student.goal, student.level);
+    const newPlan = buildBeginnerPlan(nextStage, student.goal, student.level, student.trainDays);
     const updated = {
       ...student, currentWeek: nextWeekNum, beginnerStage: nextStage,
       weeks: { ...student.weeks, [student.currentWeek]: { ...currentWeekData, adherencePct: proposal.adherencePct, avgRpe: proposal.avgRpe, submitted: true }, [nextWeekNum]: { weeklyKm: null, phase: "principiante", plan: newPlan, log: emptyLog(), note, submitted: false } },
@@ -3281,7 +3281,7 @@ function ProgressChart({ student, activeWeekNum }) {
   );
 }
 
-function LapCard({ day, index, mode, log, onChangeDay, onChangeLog, isToday, isRaceGoal, onStartLive }) {
+function LapCard({ day, index, mode, log, onChangeDay, onChangeLog, isToday, isRaceGoal, onStartLive, onSwapDay }) {
   const zone = ZONE_BY_PACEKEY[day.paceKey] || "rest";
   const zoneColor = ZONE_COLOR[zone];
   const isRest = !day.paceKey;
@@ -3309,7 +3309,16 @@ function LapCard({ day, index, mode, log, onChangeDay, onChangeLog, isToday, isR
               style={{ fontFamily: "'Oswald', sans-serif", color: COLORS.textMuted }}>
               {String(index + 1).padStart(2, "0")} · {day.day}
             </span>
-            {log?.completed && <span style={{ color: COLORS.easy }}><Check size={16} /></span>}
+            <div className="flex items-center gap-2">
+              {mode === "edit" && onSwapDay && (
+                <select value="" onChange={(e) => { if (e.target.value !== "") onSwapDay(index, Number(e.target.value)); }}
+                  className="text-[10px] rounded px-1 py-0.5" style={{ background: COLORS.bg, color: COLORS.track, border: `1px solid ${COLORS.track}55` }}>
+                  <option value="">🔀 Mover a…</option>
+                  {DAYS.map((d, i) => i !== index && <option key={i} value={i}>{d}</option>)}
+                </select>
+              )}
+              {log?.completed && <span style={{ color: COLORS.easy }}><Check size={16} /></span>}
+            </div>
           </div>
 
           {mode === "edit" ? (
@@ -3902,6 +3911,7 @@ function AddStudentForm({ onCancel, onCreate }) {
   const [targetTimeStr, setTargetTimeStr] = useState("");
   const [peakKmOverride, setPeakKmOverride] = useState("");
   const [fitnessStartWeek, setFitnessStartWeek] = useState(16);
+  const [customTrainDays, setCustomTrainDays] = useState([0, 2, 5]); // Lun, Mié, Sáb por defecto
   const [planTiming, setPlanTiming] = useState("current"); // "current" | "next"
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -3937,9 +3947,10 @@ function AddStudentForm({ onCancel, onCreate }) {
     }
     const peakKmManual = peakKmOverride.trim() !== "" ? Number(peakKmOverride) : null;
     if (peakKmManual != null && (isNaN(peakKmManual) || peakKmManual <= 0)) return setError("El km pico debe ser un número positivo.");
+    if (level === "principiante" && customTrainDays.length !== 3) return setError("Elige exactamente 3 días de entrenamiento.");
     setError("");
     setSubmitting(true);
-    onCreate({ name: name.trim(), goal, level, pin, raceDate: needsRaceInfo ? raceDate : null, targetPaceStr: needsRaceInfo ? finalPaceStr : null, peakKmOverride: peakKmManual, fitnessStartWeek: isFitnessGoal(goal) ? fitnessStartWeek : null, planTiming });
+    onCreate({ name: name.trim(), goal, level, pin, raceDate: needsRaceInfo ? raceDate : null, targetPaceStr: needsRaceInfo ? finalPaceStr : null, peakKmOverride: peakKmManual, fitnessStartWeek: isFitnessGoal(goal) ? fitnessStartWeek : null, planTiming, trainDays: customTrainDays });
   };
 
   return (
@@ -3973,6 +3984,29 @@ function AddStudentForm({ onCancel, onCreate }) {
                 <option key={w} value={w}>Semana {w}{w === 16 ? " (desde el inicio)" : ""}</option>
               ))}
             </select>
+          </div>
+        )}
+        {level === "principiante" && (
+          <div className="sm:col-span-2">
+            <label className="block text-[10px] uppercase tracking-wide mb-1" style={{ color: COLORS.textMuted }}>
+              Elige los 3 días de entrenamiento ({customTrainDays.length}/3 elegidos)
+            </label>
+            <div className="flex gap-1.5 flex-wrap">
+              {DAYS.map((d, i) => {
+                const selected = customTrainDays.includes(i);
+                return (
+                  <button key={i} type="button"
+                    onClick={() => {
+                      if (selected) setCustomTrainDays(customTrainDays.filter((x) => x !== i));
+                      else if (customTrainDays.length < 3) setCustomTrainDays([...customTrainDays, i].sort((a, b) => a - b));
+                    }}
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold"
+                    style={{ background: selected ? COLORS.track : COLORS.bg, color: COLORS.lane, border: `1px solid ${selected ? COLORS.track : COLORS.border}` }}>
+                    {d}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         )}
         {needsRaceInfo && (
@@ -4463,7 +4497,7 @@ function CoachDashboard({ roster, refreshRoster, onBack }) {
     const existingTargetWeek = student.weeks[targetWeekNum];
     let updated;
     if (isFitnessGoal(goal)) {
-      const plan = buildBeginnerPlan(0, goal, student.level);
+      const plan = buildBeginnerPlan(0, goal, student.level, student.trainDays);
       const weekEntry = { weeklyKm: null, phase: "principiante", plan, log: emptyLog(), note: `Objetivo actualizado: ${GOAL_LABEL[goal]}.`, submitted: false };
       updated = {
         ...student, goal, raceDate: null, targetPaceStr: null, paces: {}, peakKm: null, peakLongKm: null,
@@ -4476,7 +4510,7 @@ function CoachDashboard({ roster, refreshRoster, onBack }) {
       paces.race = parsePaceToDecimal(targetPaceStr);
       anchorPacesToGoal(paces, goal);
       const peakKm = peakKmOverride || computePeakKm(goal, student.level, vdot);
-      const plan = buildBeginnerPlan(student.beginnerStage ?? 0, "fitness", student.level);
+      const plan = buildBeginnerPlan(student.beginnerStage ?? 0, "fitness", student.level, student.trainDays);
       const weekEntry = applyNext
         ? { weeklyKm: null, phase: "principiante", plan, log: emptyLog(), note: `Objetivo actualizado: ${GOAL_LABEL[goal]}.`, submitted: false }
         : { ...existingTargetWeek, plan, note: `Objetivo actualizado: ${GOAL_LABEL[goal]}.` };
@@ -4594,7 +4628,7 @@ function CoachDashboard({ roster, refreshRoster, onBack }) {
     setLoadingActivity(false);
   };
 
-  const createStudent = async ({ name, goal, level, pin, raceDate, targetPaceStr, peakKmOverride, fitnessStartWeek, planTiming }) => {
+  const createStudent = async ({ name, goal, level, pin, raceDate, targetPaceStr, peakKmOverride, fitnessStartWeek, planTiming, trainDays }) => {
     if (busy) return; // segunda capa: evita crear dos veces si algo dispara la acción por duplicado
     setBusy(true);
     const id = uid();
@@ -4603,26 +4637,27 @@ function CoachDashboard({ roster, refreshRoster, onBack }) {
     const msMonday = mondayOf(new Date());
     if (planTiming === "next") msMonday.setDate(msMonday.getDate() + 7);
     const planStartMonday = `${msMonday.getFullYear()}-${String(msMonday.getMonth() + 1).padStart(2, "0")}-${String(msMonday.getDate()).padStart(2, "0")}`;
+    const finalTrainDays = level === "principiante" && trainDays && trainDays.length === 3 ? trainDays : undefined;
     let newStudent;
     if (isFitnessGoal(goal)) {
       const startWeek = fitnessStartWeek || FITNESS16_STAGES.length;
       const initialStage = fitnessStageIndexFromWeeksToGoal(startWeek);
-      const plan = buildBeginnerPlan(initialStage, goal, level);
+      const plan = buildBeginnerPlan(initialStage, goal, level, finalTrainDays);
       newStudent = {
         id, name, goal, level, pinHash, pinSalt, raceDate: null, targetPaceStr: null, paces: {}, peakKm: null, peakLongKm: null,
-        volumeOverrides: {}, longRunOverrides: {}, qualityStreaks: { q1: 0, q2: 0 }, planStartMonday,
+        volumeOverrides: {}, longRunOverrides: {}, qualityStreaks: { q1: 0, q2: 0 }, planStartMonday, trainDays: finalTrainDays,
         weeksToRace: null, currentWeek: 1, beginnerStage: initialStage,
         weeks: { 1: { weeklyKm: null, phase: "principiante", plan, log: emptyLog(), note: `Plan inicial (semana ${startWeek}): ${getStageTable(goal)[initialStage].label}.`, submitted: false } },
       };
     } else if (level === "principiante") {
-      const plan = buildBeginnerPlan(0, "fitness", level);
+      const plan = buildBeginnerPlan(0, "fitness", level, finalTrainDays);
       const vdot = computeVDOT(DISTANCE_KM[goal], parsePaceToDecimal(targetPaceStr));
       const paces = computeTrainingPaces(vdot);
       paces.race = parsePaceToDecimal(targetPaceStr);
       anchorPacesToGoal(paces, goal);
       const peakKm = peakKmOverride || computePeakKm(goal, level, vdot);
       newStudent = {
-        id, name, goal, level, pinHash, pinSalt, raceDate, targetPaceStr, paces, peakKm, volumeOverrides: {}, longRunOverrides: {}, qualityStreaks: { q1: 0, q2: 0 }, planStartMonday,
+        id, name, goal, level, pinHash, pinSalt, raceDate, targetPaceStr, paces, peakKm, volumeOverrides: {}, longRunOverrides: {}, qualityStreaks: { q1: 0, q2: 0 }, planStartMonday, trainDays: finalTrainDays,
         weeksToRace: weeksBetween(raceDate), currentWeek: 1, beginnerStage: 0,
         weeks: { 1: { weeklyKm: null, phase: "principiante", plan, log: emptyLog(), note: `Plan de acondicionamiento inicial: ${BEGINNER_STAGES[0].label}.`, submitted: false } },
       };
@@ -4655,6 +4690,21 @@ function CoachDashboard({ roster, refreshRoster, onBack }) {
     setStudent((s) => {
       const week = s.weeks[s.currentWeek];
       const plan = week.plan.map((d, i) => (i === index ? newDay : d));
+      return { ...s, weeks: { ...s.weeks, [s.currentWeek]: { ...week, plan } } };
+    });
+  };
+  // Intercambia el contenido completo de dos días entre sí (tipo, ritmo, km, overrides, etc.),
+  // manteniendo la etiqueta de día (Lun, Mar...) fija a su posición real de la semana.
+  const swapDays = (indexA, indexB) => {
+    if (indexA === indexB) return;
+    setStudent((s) => {
+      const week = s.weeks[s.currentWeek];
+      const plan = [...week.plan];
+      const dayLabelA = plan[indexA].day, dayLabelB = plan[indexB].day;
+      const a = { ...plan[indexB], day: dayLabelA };
+      const b = { ...plan[indexA], day: dayLabelB };
+      plan[indexA] = a;
+      plan[indexB] = b;
       return { ...s, weeks: { ...s.weeks, [s.currentWeek]: { ...week, plan } } };
     });
   };
@@ -4838,7 +4888,7 @@ function CoachDashboard({ roster, refreshRoster, onBack }) {
     setBusy(true);
     let updated;
     if (isFitnessGoal(student.goal) || student.level === "principiante") {
-      updated = { ...student, currentWeek: 1, beginnerStage: 0, weeks: { 1: { weeklyKm: null, phase: "principiante", plan: buildBeginnerPlan(0, student.goal, student.level), log: emptyLog(), note: "Plan reiniciado desde cero.", submitted: false } } };
+      updated = { ...student, currentWeek: 1, beginnerStage: 0, weeks: { 1: { weeklyKm: null, phase: "principiante", plan: buildBeginnerPlan(0, student.goal, student.level, student.trainDays), log: emptyLog(), note: "Plan reiniciado desde cero.", submitted: false } } };
     } else {
       const weeksToRace = weeksBetween(student.raceDate);
       const peakLongKm = student.peakLongKm || capLongRunKm(student.goal, student.level, 999);
@@ -5473,7 +5523,7 @@ function CoachDashboard({ roster, refreshRoster, onBack }) {
               )}
 
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
-                {week.plan.map((d, i) => <LapCard key={i} day={d} index={i} mode={isViewingLive ? "edit" : "view"} log={week.log[i]} onChangeDay={updateDay} />)}
+                {week.plan.map((d, i) => <LapCard key={i} day={d} index={i} mode={isViewingLive ? "edit" : "view"} log={week.log[i]} onChangeDay={updateDay} onSwapDay={isViewingLive ? swapDays : undefined} />)}
               </div>
               <div className="flex flex-wrap gap-2">
                 {isViewingLive && (
