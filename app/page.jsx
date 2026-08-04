@@ -371,6 +371,37 @@ function getTodayWeekNum(student) {
   const diffWeeks = Math.round((todayMonday - planStartMonday) / (7 * 24 * 60 * 60 * 1000));
   return Math.max(1, 1 + diffWeeks);
 }
+// Qué número de semana le corresponde a una fecha cualquiera (no necesariamente hoy) —
+// usado para ubicar una carrera intermedia dentro del calendario del alumno.
+function getWeekNumForDate(student, dateStr) {
+  const planStartMonday = student.planStartMonday ? new Date(student.planStartMonday + "T00:00:00") : mondayOf(new Date());
+  const target = new Date(dateStr + "T00:00:00");
+  const targetMonday = mondayOf(target);
+  const diffWeeks = Math.round((targetMonday - planStartMonday) / (7 * 24 * 60 * 60 * 1000));
+  return Math.max(1, 1 + diffWeeks);
+}
+// Calcula los overrides (volumen, fondo, calidad) para insertar una carrera intermedia sin
+// tocar el resto del ciclo — solo la semana de la carrera y la siguiente se ajustan; de ahí en
+// adelante el plan sigue exactamente con la tabla de calidad normal, como si nada hubiera pasado.
+function computeIntermediateRaceOverrides(student, raceGoalId, raceDateStr) {
+  const raceWeekNum = getWeekNumForDate(student, raceDateStr);
+  const recoveryWeekNum = raceWeekNum + 1;
+  const refKm = student.peakKm || student.weeks?.[student.currentWeek]?.weeklyKm || 80;
+  const raceKm = DISTANCE_KM[raceGoalId] || 21.0975;
+  const taperVolume = rWhole(refKm * 0.55);
+  const recoveryVolume = rWhole(refKm * 0.7);
+  const recoveryLongKm = rWhole(recoveryVolume * 0.24);
+  return {
+    raceWeekNum, recoveryWeekNum, taperVolume, recoveryVolume, raceKm,
+    volumeOverrides: { [raceWeekNum]: taperVolume, [recoveryWeekNum]: recoveryVolume },
+    longRunOverrides: { [raceWeekNum]: raceKm, [recoveryWeekNum]: recoveryLongKm },
+    qualityOverrides: {
+      [raceWeekNum]: { q1Type: "E", q2Type: "I", q2Dist: 1, q2Reps: 3, q3Type: "E" },
+      [recoveryWeekNum]: { q1Type: "E", q2Type: "T", q2Dist: 25, q3Type: "E" },
+    },
+  };
+}
+
 // La semana que el alumno debe ver/registrar activamente: la primera que todavía no fue
 // confirmada como cerrada (ni por el alumno al enviarla, ni por el coach al cerrarla). Ya no
 // avanza sola solo porque cambió la fecha — necesita esa confirmación real.
@@ -1928,8 +1959,8 @@ function finalizeWeekPlan(student, proposal, confirmed) {
       if (d.slot === "q2" && proposal.q2DistOverride) { const next = { ...d, distOverride: proposal.q2DistOverride, repsOverride: proposal.q2RepsOverride || undefined }; return { ...next, km: computeImpliedKm(next) }; }
       if (d.slot === "q3" && proposal.suggestedQ3) {
         return proposal.suggestedQ3 === "broken"
-          ? { ...d, paceKey: "broken", runWalk: false }
-          : { ...d, paceKey: "E", runWalk: true };
+          ? { ...d, paceKey: "broken", runWalk: false, type: getDefaultTitle("broken", false, false) }
+          : { ...d, paceKey: "E", runWalk: true, type: getDefaultTitle("E", false, true) };
       }
       return d;
     });
@@ -4456,6 +4487,9 @@ function CoachDashboard({ roster, refreshRoster, onBack }) {
   const [showEditUser, setShowEditUser] = useState(false);
   const [showOtros, setShowOtros] = useState(false);
   const [showChangeGoal, setShowChangeGoal] = useState(false);
+  const [showIntermediateRace, setShowIntermediateRace] = useState(false);
+  const [interRaceGoal, setInterRaceGoal] = useState("21k");
+  const [interRaceDate, setInterRaceDate] = useState("");
   const [newPin, setNewPin] = useState("");
   const [pinMsg, setPinMsg] = useState("");
   const [showReports, setShowReports] = useState(false);
@@ -4492,6 +4526,8 @@ function CoachDashboard({ roster, refreshRoster, onBack }) {
     setShowRitmos(false);
     setViewedWeek(null);
     setShowChangeGoal(false);
+    setShowIntermediateRace(false);
+    setInterRaceDate("");
     setPanoramaEdits({});
     setPanoramaLongEdits({});
     setQualityEdits({});
@@ -4816,7 +4852,9 @@ function CoachDashboard({ roster, refreshRoster, onBack }) {
         });
       }
     }
-    const { updated, note } = finalizeWeekPlan(studentWithStreaks, proposal, proposalValues);
+    const finalized = finalizeWeekPlan(studentWithStreaks, proposal, proposalValues);
+    const updated = applyIntermediateRaceDayPatch(finalized.updated);
+    const note = finalized.note;
     if (!force) {
       const newPlan = updated.weeks[updated.currentWeek]?.plan;
       const warnings = getAnomalyWarnings(newPlan);
@@ -4965,7 +5003,57 @@ function CoachDashboard({ roster, refreshRoster, onBack }) {
     setBusy(false);
   };
 
-  const resetPlan = async () => {
+  const applyIntermediateRace = async () => {
+    if (!student || !interRaceDate) return;
+    setBusy(true);
+    const ov = computeIntermediateRaceOverrides(student, interRaceGoal, interRaceDate);
+    const updated = {
+      ...student,
+      volumeOverrides: { ...(student.volumeOverrides || {}), ...ov.volumeOverrides },
+      longRunOverrides: { ...(student.longRunOverrides || {}), ...ov.longRunOverrides },
+      qualityOverrides: { ...(student.qualityOverrides || {}), ...ov.qualityOverrides },
+      intermediateRace: { goalId: interRaceGoal, date: interRaceDate, raceWeekNum: ov.raceWeekNum, recoveryWeekNum: ov.recoveryWeekNum },
+    };
+    await safeSet(`student:${student.id}`, updated);
+    setStudent(updated);
+    setInterRaceDate("");
+    setBusy(false);
+  };
+  const removeIntermediateRace = async () => {
+    if (!student || !student.intermediateRace) return;
+    setBusy(true);
+    const { raceWeekNum, recoveryWeekNum } = student.intermediateRace;
+    const volumeOverrides = { ...(student.volumeOverrides || {}) };
+    const longRunOverrides = { ...(student.longRunOverrides || {}) };
+    const qualityOverrides = { ...(student.qualityOverrides || {}) };
+    delete volumeOverrides[raceWeekNum]; delete volumeOverrides[recoveryWeekNum];
+    delete longRunOverrides[raceWeekNum];
+    delete qualityOverrides[raceWeekNum]; delete qualityOverrides[recoveryWeekNum];
+    const updated = { ...student, volumeOverrides, longRunOverrides, qualityOverrides, intermediateRace: null };
+    await safeSet(`student:${student.id}`, updated);
+    setStudent(updated);
+    setBusy(false);
+  };
+  const INTERMEDIATE_RACE_LABEL = { "10k": "10K", "21k": "MEDIA MARATÓN", "42k": "MARATÓN" };
+// Convierte el domingo de la semana de la carrera intermedia en un día de carrera real —
+// distancia exacta y sin la estructura de fondo progresivo (calentamiento + bloque + cierre),
+// en vez de solo cambiarle el kilometraje al fondo normal.
+function applyIntermediateRaceDayPatch(student) {
+  const ir = student.intermediateRace;
+  if (!ir || student.currentWeek !== ir.raceWeekNum) return student;
+  const week = student.weeks[student.currentWeek];
+  if (!week) return student;
+  const sundayIdx = week.plan.findIndex((d) => d.day === "Dom");
+  if (sundayIdx < 0) return student;
+  const raceKm = DISTANCE_KM[ir.goalId] || 21.0975;
+  const patchedDay = {
+    ...week.plan[sundayIdx], paceKey: "race", type: INTERMEDIATE_RACE_LABEL[ir.goalId] || "CARRERA", km: raceKm,
+    longProgressive: false, targetPace: null,
+  };
+  const plan = week.plan.map((d, i) => (i === sundayIdx ? patchedDay : d));
+  return { ...student, weeks: { ...student.weeks, [student.currentWeek]: { ...week, plan } } };
+}
+const resetPlan = async () => {
     if (!student) return;
     setBusy(true);
     let updated;
@@ -5517,6 +5605,13 @@ function CoachDashboard({ roster, refreshRoster, onBack }) {
                       <RefreshCcw size={14} /> Actualizar títulos
                     </button>
                   )}
+                  {isViewingLive && !isFitnessGoal(student.goal) && student.level !== "principiante" && (
+                    <button onClick={() => setShowIntermediateRace((v) => !v)} disabled={busy}
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold"
+                      style={{ background: showIntermediateRace ? COLORS.track : COLORS.bg, color: COLORS.lane, border: `1px solid ${showIntermediateRace ? COLORS.track : COLORS.border}` }}>
+                      <Flag size={14} /> Carrera intermedia
+                    </button>
+                  )}
                   {isViewingLive && student.level !== "principiante" && (
                     <button onClick={togglePauseWeek} disabled={busy}
                       className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold"
@@ -5563,6 +5658,72 @@ function CoachDashboard({ roster, refreshRoster, onBack }) {
 
               {showChangeGoal && (
                 <ChangeGoalForm student={student} busy={busy} onCancel={() => setShowChangeGoal(false)} onSave={changeGoal} />
+              )}
+
+              {showIntermediateRace && (
+                <div className="rounded-xl p-4 mb-4" style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}` }}>
+                  <div className="flex items-center gap-2 mb-1">
+                    <Flag size={16} style={{ color: COLORS.track }} />
+                    <div className="text-sm font-semibold" style={{ color: COLORS.textPrimary, fontFamily: "'Oswald', sans-serif" }}>CARRERA INTERMEDIA</div>
+                  </div>
+                  {student.intermediateRace ? (
+                    <div>
+                      <p className="text-xs mb-3" style={{ color: COLORS.textMuted }}>
+                        Activa: <span style={{ color: COLORS.lane, fontWeight: 600 }}>{GOALS.find((g) => g.id === student.intermediateRace.goalId)?.label}</span> el {(() => { const d = new Date(student.intermediateRace.date + "T00:00:00"); return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`; })()} — ajustando la semana {student.intermediateRace.raceWeekNum} y la {student.intermediateRace.recoveryWeekNum}.
+                      </p>
+                      <button onClick={removeIntermediateRace} disabled={busy}
+                        className="px-4 py-2 rounded-lg text-sm font-semibold" style={{ background: COLORS.bg, color: COLORS.track, border: `1px solid ${COLORS.track}` }}>
+                        Volver al plan original (quitar carrera intermedia)
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                  <p className="text-xs mb-3" style={{ color: COLORS.textMuted }}>
+                    Se ajustan solo la semana de la carrera y la siguiente — el resto del plan sigue exactamente igual.
+                  </p>
+                  <div className="grid sm:grid-cols-2 gap-3 mb-3">
+                    <div>
+                      <label className="block text-[10px] uppercase tracking-wide mb-1" style={{ color: COLORS.textMuted }}>Distancia</label>
+                      <select value={interRaceGoal} onChange={(e) => setInterRaceGoal(e.target.value)}
+                        className="w-full rounded px-3 py-2 text-sm" style={{ background: COLORS.bg, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
+                        {GOALS.filter((g) => !isFitnessGoal(g.id)).map((g) => <option key={g.id} value={g.id}>{g.label}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] uppercase tracking-wide mb-1" style={{ color: COLORS.textMuted }}>Fecha de la carrera</label>
+                      <input type="date" value={interRaceDate} onChange={(e) => setInterRaceDate(e.target.value)}
+                        className="w-full rounded px-3 py-2 text-sm" style={{ background: COLORS.bg, color: COLORS.lane, border: `1px solid ${COLORS.border}` }} />
+                    </div>
+                  </div>
+                  {interRaceDate && (() => {
+                    const preview = computeIntermediateRaceOverrides(student, interRaceGoal, interRaceDate);
+                    return (
+                      <div className="space-y-2 mb-3">
+                        <div className="text-[10px] uppercase tracking-wide" style={{ color: COLORS.textMuted }}>Se va a ajustar</div>
+                        <div className="rounded-lg px-3 py-2 flex items-center justify-between" style={{ background: COLORS.bg, borderLeft: `3px solid ${COLORS.track}` }}>
+                          <span className="text-xs" style={{ color: COLORS.lane }}>Semana {preview.raceWeekNum} · puesta a punto — {GOALS.find((g) => g.id === interRaceGoal)?.label} el domingo</span>
+                          <span className="text-xs font-bold" style={{ color: COLORS.track }}>{preview.taperVolume} km</span>
+                        </div>
+                        <div className="rounded-lg px-3 py-2 flex items-center justify-between" style={{ background: COLORS.bg, borderLeft: `3px solid ${COLORS.moderate}` }}>
+                          <span className="text-xs" style={{ color: COLORS.lane }}>Semana {preview.recoveryWeekNum} · recuperación — umbral corto (25')</span>
+                          <span className="text-xs font-bold" style={{ color: COLORS.moderate }}>{preview.recoveryVolume} km</span>
+                        </div>
+                        <div className="text-xs" style={{ color: COLORS.textMuted }}>Semana {preview.recoveryWeekNum + 1} en adelante: sin ningún cambio.</div>
+                      </div>
+                    );
+                  })()}
+                  <div className="flex gap-2">
+                    <button onClick={applyIntermediateRace} disabled={busy || !interRaceDate}
+                      className="px-4 py-2 rounded-lg text-sm font-semibold" style={{ background: COLORS.track, color: COLORS.lane, opacity: !interRaceDate ? 0.5 : 1 }}>
+                      Aplicar carrera intermedia
+                    </button>
+                    <button onClick={() => setShowIntermediateRace(false)} className="px-3 py-2 rounded-lg text-sm" style={{ color: COLORS.textMuted }}>
+                      Cancelar
+                    </button>
+                  </div>
+                  </>
+                  )}
+                </div>
               )}
 
               {showRitmos && (
