@@ -1659,6 +1659,10 @@ function buildRacePlan(goalId, phase, level, weeklyKm, longRunKm, q1PaceKey, q2P
     else if (slotDef.slot === "easy") {
       km = r1(remaining * (slotDef.pct / flexTotalPct));
       if (i === 0 && paces && paces.E) km = Math.min(km, r1(48 / paces.E));
+      // Si al presupuesto semanal no le alcanza para darle a este día un mínimo real de
+      // kilometraje, mejor que quede como descanso genuino — antes se etiquetaba igual como
+      // sesión de Run/Walk aunque el cálculo diera 0 km, lo cual no tiene sentido.
+      if (km < 1) { paceKey = ""; km = 0; }
     }
     else { km = 0; }
     const paceForDisplay = paceKey === "long" ? "long" : (paceKey === "broken" ? "T" : (paceKey === "combo1k500" ? "I" : paceKey));
@@ -1696,8 +1700,38 @@ function balanceWeeklyVolume(plan, weeklyKm) {
   const sumOthers = plan.reduce((s, d, i) => (i === balanceIdx ? s : s + (d.km || 0)), 0);
   const adjustedKm = Math.max(0, r1(weeklyKm - sumOthers));
   const next = [...plan];
-  next[balanceIdx] = { ...next[balanceIdx], km: adjustedKm };
+  // Si al ajustar la semana no queda presupuesto real para este día, que se convierta en
+  // descanso genuino en vez de quedar como una sesión de tipo "Run/Walk"/"Easy" con 0 km.
+  next[balanceIdx] = adjustedKm < 1
+    ? { ...next[balanceIdx], km: 0, paceKey: "", type: "Descanso", runWalk: false, targetPace: null }
+    : { ...next[balanceIdx], km: adjustedKm };
   return next;
+}
+
+// Revisa un plan semanal recién generado en busca de cosas que se ven raras — sesiones con
+// entrenamiento pero 0 km, sesiones inusualmente largas, etc. — para avisarle al coach antes de
+// aplicarlo, en vez de dejarlo pasar en silencio.
+const ANOMALY_MAX_KM = 36; // por encima de esto, se avisa (una vuelta de maratón completa y algo más)
+const ANOMALY_MAX_LONG_KM = 42; // el fondo del domingo tolera un poco más antes de avisar
+function getAnomalyWarnings(plan) {
+  if (!plan || !Array.isArray(plan)) return [];
+  const warnings = [];
+  plan.forEach((d) => {
+    if (!d || !d.paceKey) return; // día de descanso, no aplica
+    const km = d.km;
+    if (km == null || isNaN(km) || km <= 0) {
+      warnings.push(`${d.day}: "${d.type}" tiene entrenamiento asignado pero el kilometraje aparece en 0.`);
+      return;
+    }
+    const limit = d.slot === "long" || d.paceKey === "long" ? ANOMALY_MAX_LONG_KM : ANOMALY_MAX_KM;
+    if (km > limit) {
+      warnings.push(`${d.day}: "${d.type}" tiene ${km} km — es una sesión inusualmente larga, revisa si es correcto.`);
+    }
+    if (km > 0 && km < 0.5 && d.slot !== "q2" && d.slot !== "q1") {
+      warnings.push(`${d.day}: "${d.type}" tiene solo ${km} km — parece demasiado corto, revisa si es correcto.`);
+    }
+  });
+  return warnings;
 }
 
 function computeBaselineWeek(goalId, level, peakKm, peakLongKm, weeksToRace) {
@@ -4077,7 +4111,7 @@ function ProposalPanel({ proposal, values, setValues, onConfirm, onCancel, busy,
         {weekDateRange && <div className="text-xs mb-2" style={{ color: COLORS.track, fontFamily: "'JetBrains Mono', monospace" }}>{weekDateRange}</div>}
         <p className="text-xs mb-3" style={{ color: COLORS.textMuted }}>Se avanzará o mantendrá la etapa de acondicionamiento según la adherencia registrada.</p>
         <div className="flex gap-2">
-          <button onClick={onConfirm} disabled={busy} className="px-4 py-1.5 rounded text-sm font-semibold" style={{ background: COLORS.track, color: COLORS.lane }}>Confirmar y generar</button>
+          <button onClick={() => onConfirm()} disabled={busy} className="px-4 py-1.5 rounded text-sm font-semibold" style={{ background: COLORS.track, color: COLORS.lane }}>Confirmar y generar</button>
           <button onClick={onCancel} className="px-3 py-1.5 rounded text-sm" style={{ color: COLORS.textMuted }}>Cancelar</button>
         </div>
       </div>
@@ -4145,7 +4179,7 @@ function ProposalPanel({ proposal, values, setValues, onConfirm, onCancel, busy,
         )}
       </div>
       <div className="flex gap-2 mt-3">
-        <button onClick={onConfirm} disabled={busy} className="px-4 py-1.5 rounded text-sm font-semibold" style={{ background: COLORS.track, color: COLORS.lane }}>Confirmar y aplicar</button>
+        <button onClick={() => onConfirm()} disabled={busy} className="px-4 py-1.5 rounded text-sm font-semibold" style={{ background: COLORS.track, color: COLORS.lane }}>Confirmar y aplicar</button>
         <button onClick={onCancel} className="px-3 py-1.5 rounded text-sm" style={{ color: COLORS.textMuted }}>Cancelar</button>
       </div>
     </div>
@@ -4654,7 +4688,7 @@ function CoachDashboard({ roster, refreshRoster, onBack }) {
   }, [roster]);
   useEffect(() => { loadRosterProgress(); }, [roster]);
 
-  const createStudent = async ({ name, goal, level, pin, raceDate, targetPaceStr, peakKmOverride, fitnessStartWeek, planTiming, trainDays }) => {
+  const createStudent = async ({ name, goal, level, pin, raceDate, targetPaceStr, peakKmOverride, fitnessStartWeek, planTiming, trainDays, forceCreate }) => {
     if (busy) return; // segunda capa: evita crear dos veces si algo dispara la acción por duplicado
     setBusy(true);
     const id = uid();
@@ -4701,6 +4735,16 @@ function CoachDashboard({ roster, refreshRoster, onBack }) {
         weeks: { 1: { weeklyKm, phase, plan, log: emptyLog(), note: `Fase inicial: ${PHASE_LABEL[phase]}.`, submitted: false } },
       };
     }
+    if (!forceCreate) {
+      const firstWeekPlan = newStudent.weeks[1]?.plan;
+      const warnings = getAnomalyWarnings(firstWeekPlan);
+      if (warnings.length) {
+        setPendingCreate({ args: { name, goal, level, pin, raceDate, targetPaceStr, peakKmOverride, fitnessStartWeek, planTiming, trainDays }, warnings });
+        setBusy(false);
+        return;
+      }
+    }
+    setPendingCreate(null);
     await safeSet(`student:${id}`, newStudent);
     const freshRoster2 = (await safeGet("roster")) || [];
     const newRoster = [...freshRoster2, { id, name, goal, level, weekNumber: 1, lastAdherence: null, raceDate: isFitnessGoal(goal) ? null : raceDate, waitingApproval: false }];
@@ -4752,7 +4796,9 @@ function CoachDashboard({ roster, refreshRoster, onBack }) {
       q1PaceKey: p.suggestedQ1 ?? "", q2PaceKey: p.suggestedQ2 ?? "",
     });
   };
-  const confirmProposal = async () => {
+  const [anomalyWarnings, setAnomalyWarnings] = useState(null);
+  const [pendingCreate, setPendingCreate] = useState(null);
+  const confirmProposal = async (force) => {
     if (!student || !proposal) return;
     setBusy(true);
     let studentWithStreaks = student;
@@ -4771,6 +4817,16 @@ function CoachDashboard({ roster, refreshRoster, onBack }) {
       }
     }
     const { updated, note } = finalizeWeekPlan(studentWithStreaks, proposal, proposalValues);
+    if (!force) {
+      const newPlan = updated.weeks[updated.currentWeek]?.plan;
+      const warnings = getAnomalyWarnings(newPlan);
+      if (warnings.length) {
+        setAnomalyWarnings(warnings);
+        setBusy(false);
+        return;
+      }
+    }
+    setAnomalyWarnings(null);
     await safeSet(`student:${student.id}`, updated);
     const freshRoster3 = (await safeGet("roster")) || [];
     const newRoster = freshRoster3.map((r) => (r.id === student.id ? { ...r, weekNumber: updated.currentWeek, waitingApproval: false } : r));
@@ -5212,6 +5268,26 @@ function CoachDashboard({ roster, refreshRoster, onBack }) {
             <Plus size={16} /> Añadir alumno
           </button>
           {showAdd && <AddStudentForm onCancel={() => setShowAdd(false)} onCreate={createStudent} />}
+          {pendingCreate && (
+            <div className="rounded-xl p-4 mb-4" style={{ background: COLORS.moderate + "18", border: `1px solid ${COLORS.moderate}` }}>
+              <div className="flex items-center gap-2 mb-2">
+                <AlertCircle size={16} style={{ color: COLORS.moderate }} />
+                <span className="text-sm font-semibold" style={{ color: COLORS.textPrimary }}>El plan inicial tiene algo que revisar</span>
+              </div>
+              <ul className="text-xs mb-3 space-y-1 list-disc pl-4" style={{ color: COLORS.textMuted }}>
+                {pendingCreate.warnings.map((w, i) => <li key={i}>{w}</li>)}
+              </ul>
+              <div className="flex gap-2">
+                <button onClick={() => createStudent({ ...pendingCreate.args, forceCreate: true })} disabled={busy}
+                  className="px-3 py-1.5 rounded text-xs font-semibold" style={{ background: COLORS.moderate, color: COLORS.bg }}>
+                  Crear de todas formas
+                </button>
+                <button onClick={() => setPendingCreate(null)} className="px-3 py-1.5 rounded text-xs" style={{ color: COLORS.textMuted }}>
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          )}
 
           {roster.length > 0 && (
             <div className="flex flex-wrap gap-2 mb-3">
@@ -5545,6 +5621,25 @@ function CoachDashboard({ roster, refreshRoster, onBack }) {
                 </div>
               )}
 
+              {anomalyWarnings && (
+                <div className="rounded-xl p-4 mb-4" style={{ background: COLORS.moderate + "18", border: `1px solid ${COLORS.moderate}` }}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <AlertCircle size={16} style={{ color: COLORS.moderate }} />
+                    <span className="text-sm font-semibold" style={{ color: COLORS.textPrimary }}>Esta semana tiene algo que revisar</span>
+                  </div>
+                  <ul className="text-xs mb-3 space-y-1 list-disc pl-4" style={{ color: COLORS.textMuted }}>
+                    {anomalyWarnings.map((w, i) => <li key={i}>{w}</li>)}
+                  </ul>
+                  <div className="flex gap-2">
+                    <button onClick={() => confirmProposal(true)} disabled={busy} className="px-3 py-1.5 rounded text-xs font-semibold" style={{ background: COLORS.moderate, color: COLORS.bg }}>
+                      Aplicar de todas formas
+                    </button>
+                    <button onClick={() => setAnomalyWarnings(null)} className="px-3 py-1.5 rounded text-xs" style={{ color: COLORS.textMuted }}>
+                      Volver a revisar
+                    </button>
+                  </div>
+                </div>
+              )}
               {proposal && (
                 <ProposalPanel proposal={proposal} values={proposalValues} setValues={setProposalValues}
                   onConfirm={confirmProposal} onCancel={() => setProposal(null)} busy={busy}
