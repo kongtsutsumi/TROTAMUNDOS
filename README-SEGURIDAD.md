@@ -97,3 +97,21 @@ Puedes reabrir temporalmente la base ejecutando esto en el SQL Editor, y avisarm
 ```sql
 create policy "acceso abierto kv_store" on kv_store for all using (true) with check (true);
 ```
+
+---
+
+# Pruebas automáticas
+
+Para verificar que el motor de planes sigue funcionando bien después de cualquier cambio:
+
+```
+npm test
+```
+
+Corre 700 verificaciones sobre todas las combinaciones de objetivo × nivel × momento del
+ciclo: que ningún día quede con entrenamiento pero 0 km, que no haya sesiones absurdamente
+largas, que los volúmenes cuadren, que se respete el km pico, y que la carrera intermedia
+ajuste las semanas correctas.
+
+**Cuándo usarlo**: siempre después de tocar algo del cálculo de planes, y antes de subir
+cambios. Si algo se rompió, lo dice en segundos con el detalle exacto.

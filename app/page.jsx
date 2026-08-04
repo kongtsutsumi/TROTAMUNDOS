@@ -1770,7 +1770,7 @@ function computeBaselineWeek(goalId, level, peakKm, peakLongKm, weeksToRace) {
   const phase = getPhase(weeksToRace, goalId);
   const cyclePos = getCyclePosition(weeksToRace, taperWeeks);
   let weeklyKm;
-  if (phase === "taper") weeklyKm = rWhole(peakKm * getPhaseFactor(phase, weeksToRace));
+  if (phase === "taper" || phase === "race") weeklyKm = rWhole(peakKm * getPhaseFactor(phase, weeksToRace));
   else if (cyclePos.isPeak) weeklyKm = rWhole(peakKm);
   else weeklyKm = rWhole(peakKm * chunkBaselineFactor(cyclePos.chunk) * fracForWeek(cyclePos.w));
   weeklyKm = Math.min(weeklyKm, rWhole(peakKm));
