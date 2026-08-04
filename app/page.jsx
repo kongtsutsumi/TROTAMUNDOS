@@ -1,5 +1,5 @@
 "use client";
-import { safeGet, safeSet, safeDelete, safeGetWithRetry, safeGetPersonal, safeSetPersonal, safeDeletePersonal } from "../lib/storage";
+import { safeGet, safeSet, safeDelete, safeGetWithRetry, safeGetPersonal, safeSetPersonal, safeDeletePersonal, authStatus, coachSetup, coachLogin, studentList, studentLogin, logout } from "../lib/storage";
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Users, User, Plus, ArrowLeft, Check, Flag, TrendingUp, TrendingDown,
@@ -3738,7 +3738,7 @@ function CoachGate({ onSuccess, onBack }) {
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState("");
 
-  useEffect(() => { safeGet("coachAuth").then((auth) => setMode(auth ? "enter" : "set")); }, []);
+  useEffect(() => { authStatus().then((r) => setMode(r.coachConfigured ? "enter" : "set")); }, []);
 
   const verifySetup = () => {
     if (setupCode !== COACH_SETUP_CODE) return setError("Código de configuración incorrecto.");
@@ -3746,19 +3746,16 @@ function CoachGate({ onSuccess, onBack }) {
     setSetupVerified(true);
   };
   const handleSet = async () => {
-    if (password.length < 4) return setError("La contraseña debe tener al menos 4 caracteres.");
+    if (password.length < 6) return setError("La contraseña debe tener al menos 6 caracteres.");
     if (password !== confirm) return setError("Las contraseñas no coinciden.");
-    const salt = genSalt();
-    const hash = await hashText(password, salt);
-    await safeSet("coachAuth", { hash, salt });
-    onSuccess();
+    const r = await coachSetup(setupCode, password);
+    if (r.ok) onSuccess();
+    else setError(r.error || "No se pudo configurar la contraseña.");
   };
   const handleEnter = async () => {
-    const auth = await safeGet("coachAuth");
-    if (!auth) return setError("Contraseña incorrecta.");
-    const hash = await hashText(password, auth.salt);
-    if (auth.hash === hash) onSuccess();
-    else setError("Contraseña incorrecta.");
+    const r = await coachLogin(password);
+    if (r.ok) onSuccess();
+    else setError(r.error || "Contraseña incorrecta.");
   };
 
   return (
@@ -3809,13 +3806,13 @@ function StudentGate({ roster, onSuccess, onBack }) {
   const filtered = search.trim() ? roster.filter((r) => r.name.toLowerCase().includes(search.toLowerCase())) : [];
 
   const handleEnter = async () => {
-    const record = await safeGet(`student:${selected.id}`);
-    if (!record) return setError("No se encontró tu registro.");
-    const hash = await hashText(pin, record.pinSalt);
-    if (record.pinHash === hash) {
+    // El PIN se verifica en el servidor — el navegador ya no recibe los datos del alumno
+    // antes de comprobar la identidad.
+    const r = await studentLogin(selected.id, pin);
+    if (r.ok) {
       await safeSetPersonal("rememberedStudent", { id: selected.id });
       onSuccess(selected.id);
-    } else setError("PIN incorrecto.");
+    } else setError(r.error === "PIN incorrecto" ? "PIN incorrecto." : (r.error || "No se pudo ingresar."));
   };
 
   return (
@@ -6192,18 +6189,20 @@ export default function App() {
   const [roster, setRoster] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // Antes de iniciar sesión solo se pide la lista mínima (nombres e id) para el buscador —
+  // ya no se descarga el listado completo con datos de entrenamiento de todos los alumnos.
   const refreshRoster = useCallback(async () => {
-    const r = await safeGetWithRetry("roster", 3, 350);
-    if (r != null) setRoster(r);
+    const r = await studentList();
+    if (r && Array.isArray(r.students)) setRoster(r.students);
   }, []);
   useEffect(() => {
     (async () => {
       await refreshRoster();
       const remembered = await safeGetPersonal("rememberedStudent");
       if (remembered && remembered.id) {
+        // solo entra directo si la sesión guardada en el servidor sigue siendo válida
         const record = await safeGet(`student:${remembered.id}`);
         if (record) { setAuthedStudentId(remembered.id); setView("student"); }
-        else { await safeDeletePersonal("rememberedStudent"); }
       }
       setLoading(false);
     })();
