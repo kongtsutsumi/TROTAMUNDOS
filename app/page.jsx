@@ -4456,7 +4456,17 @@ function RitmosPanel({ student, onSave, busy }) {
   );
 }
 
-function CoachDashboard({ roster, refreshRoster, onBack }) {
+function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, onBack }) {
+  // El coach necesita el listado COMPLETO (objetivo, nivel, semana, adherencia). La lista que
+  // llega desde la pantalla de inicio viene recortada a nombre e id por seguridad, así que
+  // aquí se pide el listado real — el servidor ya sabe que hay una sesión de coach válida.
+  const [roster, setRoster] = useState(rosterProp || []);
+  const refreshRoster = useCallback(async () => {
+    const full = await safeGetWithRetry("roster", 3, 350);
+    if (full != null) setRoster(full);
+    if (refreshRosterProp) refreshRosterProp();
+  }, [refreshRosterProp]);
+  useEffect(() => { refreshRoster(); }, []);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState(null);
   const [goalFilter, setGoalFilter] = useState("");
