@@ -3660,7 +3660,7 @@ function LapCard({ day, index, mode, log, onChangeDay, onChangeLog, isToday, isR
             <div className="mt-3 pt-3 space-y-2" style={{ borderTop: `1px dashed ${COLORS.border}` }}>
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <label className="flex items-center gap-2 text-xs cursor-pointer" style={{ color: COLORS.textMuted }}>
-                  <input type="checkbox" checked={!!log?.completed} onChange={(e) => onChangeLog(index, { ...log, completed: e.target.checked })} style={{ accentColor: COLORS.track }} />
+                  <input type="checkbox" checked={!!log?.completed} onChange={(e) => onChangeLog(index, { ...log, completed: e.target.checked }, true)} style={{ accentColor: COLORS.track }} />
                   Sesión completada
                 </label>
                 <div className="flex items-center gap-2">
@@ -3671,7 +3671,7 @@ function LapCard({ day, index, mode, log, onChangeDay, onChangeLog, isToday, isR
                     </button>
                   )}
                   <button type="button"
-                    onClick={() => onChangeLog(index, { ...log, completed: true, actualKm: day.km, actualPaceStr: log?.actualPaceStr || (getRepresentativePace(day) ? formatPace(getRepresentativePace(day)) : "") })}
+                    onClick={() => onChangeLog(index, { ...log, completed: true, actualKm: day.km, actualPaceStr: log?.actualPaceStr || (getRepresentativePace(day) ? formatPace(getRepresentativePace(day)) : "") }, true)}
                     className="text-xs px-2 py-1 rounded" style={{ background: COLORS.bg, color: COLORS.easy, border: `1px solid ${COLORS.easy}55` }}>
                     ✓ Tal cual estaba planeado
                   </button>
@@ -4723,9 +4723,12 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
       const wk = s.currentWeek;
       const week = s.weeks[wk];
       if (!week) continue;
-      const slots = (week.plan || []).filter((d) => !!d.paceKey);
-      const completed = slots.filter((d, i) => week.log?.[i]?.completed).length;
-      entries[r.id] = { completed, total: slots.length };
+      // Se cuenta sobre el plan completo para no perder la posición real de cada día:
+      // filtrar primero y luego buscar en el registro por el índice del array filtrado
+      // desalineaba los días y daba conteos menores a los reales.
+      const total = (week.plan || []).filter((d) => !!d.paceKey).length;
+      const completed = (week.plan || []).filter((d, i) => !!d.paceKey && week.log?.[i]?.completed).length;
+      entries[r.id] = { completed, total };
     }
     setRosterProgress(entries);
   }, [roster]);
@@ -5393,7 +5396,12 @@ const resetPlan = async () => {
               </button>
               <button onClick={() => setStatusFilter(statusFilter === "waiting" ? null : "waiting")}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold"
-                style={{ background: statusFilter === "waiting" ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.track}55` }}>
+                style={{
+                  background: (statusFilter === "waiting" || waitingCount > 0) ? COLORS.track : COLORS.surface2,
+                  color: COLORS.lane,
+                  border: `1px solid ${COLORS.track}${waitingCount > 0 ? "" : "55"}`,
+                  boxShadow: waitingCount > 0 ? `0 0 0 3px ${COLORS.track}22` : "none",
+                }}>
                 <Clock size={12} /> {waitingCount} esperando aprobación
               </button>
               <button onClick={() => setStatusFilter(statusFilter === "low" ? null : "low")}
@@ -5431,12 +5439,23 @@ const resetPlan = async () => {
             {filteredRoster.map((r) => (
               <button key={r.id} onClick={() => setSelectedId(selectedId === r.id ? null : r.id)}
                 className="w-full text-left rounded-lg p-3 flex items-center justify-between transition-colors"
-                style={{ background: selectedId === r.id ? COLORS.surface2 : COLORS.surface, border: `1px solid ${selectedId === r.id ? COLORS.track : COLORS.border}` }}>
+                style={{
+                  background: r.waitingApproval ? COLORS.track + "1A" : (selectedId === r.id ? COLORS.surface2 : COLORS.surface),
+                  border: `${r.waitingApproval ? 2 : 1}px solid ${r.waitingApproval ? COLORS.track : (selectedId === r.id ? COLORS.track : COLORS.border)}`,
+                  boxShadow: r.waitingApproval ? `0 0 0 3px ${COLORS.track}22` : "none",
+                }}>
                 <div className="min-w-0">
                   <div className="text-sm font-semibold truncate flex items-center gap-2" style={{ color: COLORS.textPrimary }}>
                     {r.name}
-                    {r.waitingApproval && <span title="Esperando tu aprobación" style={{ width: 7, height: 7, borderRadius: 999, background: COLORS.track, display: "inline-block" }} />}
                   </div>
+                  {r.waitingApproval && (
+                    <div className="flex items-center gap-1.5 mt-1 px-2 py-0.5 rounded-full w-fit" style={{ background: COLORS.track }}>
+                      <Check size={11} style={{ color: COLORS.lane }} />
+                      <span className="text-[10px] font-bold uppercase tracking-wide" style={{ color: COLORS.lane }}>
+                        Semana enviada · cerrar y generar la siguiente
+                      </span>
+                    </div>
+                  )}
                   <div className="text-xs mt-0.5" style={{ color: COLORS.textMuted }}>
                     {GOAL_LABEL[r.goal]} · {LEVEL_LABEL[r.level]} · Semana {r.weekNumber}
                     {r.raceDate ? ` · faltan ${weeksBetween(r.raceDate)} sem.` : ""}
@@ -5870,6 +5889,7 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
   const [student, setStudent] = useState(null);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
   const [viewedWeek, setViewedWeek] = useState(null);
 
@@ -5888,22 +5908,36 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
 
   useEffect(() => { setViewedWeek(null); }, [student?.currentWeek]);
 
-  const changeLog = (index, entry) => {
+  // Autoguardado: al marcar una sesión o escribir un dato, se guarda solo — sin botón aparte.
+  // Se espera un momento antes de guardar para no mandar una petición por cada tecla mientras
+  // el alumno escribe los km o una nota; al marcar una casilla el guardado es inmediato.
+  const saveTimerRef = React.useRef(null);
+  const pendingStudentRef = React.useRef(null);
+  const persistNow = useCallback(async () => {
+    if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null; }
+    const toSave = pendingStudentRef.current;
+    if (!toSave) return;
+    pendingStudentRef.current = null;
+    setSaving(true);
+    await safeSet(`student:${toSave.id}`, toSave);
+    setSaving(false);
+    setSaved(true);
+  }, []);
+  const changeLog = (index, entry, immediate) => {
     setStudent((s) => {
       const wk = getActiveLogWeek(s);
       const week = s.weeks[wk];
       const log = week.log.map((l, i) => (i === index ? entry : l));
-      return { ...s, weeks: { ...s.weeks, [wk]: { ...week, log } } };
+      const updated = { ...s, weeks: { ...s.weeks, [wk]: { ...week, log } } };
+      pendingStudentRef.current = updated;
+      return updated;
     });
     setSaved(false);
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => { persistNow(); }, immediate ? 0 : 900);
   };
-  const saveLog = async () => {
-    if (!student) return;
-    setBusy(true);
-    await safeSet(`student:${student.id}`, student);
-    setBusy(false);
-    setSaved(true);
-  };
+  // Si el alumno cierra o cambia de pantalla con algo sin guardar, se intenta guardar antes.
+  useEffect(() => () => { if (pendingStudentRef.current) persistNow(); }, [persistNow]);
   // Guarda de inmediato el resultado del "entrenamiento en vivo" — a diferencia del resto del
   // registro manual, aquí tiene más sentido que quede guardado al toque, sin un paso extra.
   const saveLiveTrainingResult = async (index, entry) => {
@@ -5921,6 +5955,10 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
   const submitWeek = async () => {
     if (!student) return;
     setBusy(true);
+    // Si quedaba algo por guardar (el alumno escribió algo justo antes de enviar), se guarda
+    // primero para que no se pierda.
+    if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null; }
+    pendingStudentRef.current = null;
     const wk = getActiveLogWeek(student);
     const week = student.weeks[wk];
     const { adherencePct, avgRpe } = computeAdherence(week.plan, week.log);
@@ -6117,16 +6155,15 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
 
           {!waitingForCoach && (
             <>
-              <div className="flex flex-wrap gap-2">
-                <button onClick={saveLog} disabled={busy}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-50"
-                  style={{ background: COLORS.track, color: COLORS.lane }}>
-                  <Check size={14} /> {saved ? "Guardado" : "Guardar registro"}
-                </button>
+              <div className="flex flex-wrap gap-2 items-center">
+                <span className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs"
+                  style={{ color: saving ? COLORS.textMuted : COLORS.easy }}>
+                  {saving ? (<><RotateCw size={12} /> Guardando…</>) : (<><Check size={12} /> Se guarda solo</>)}
+                </span>
                 {!showSubmitConfirm && (
                   <button onClick={() => setShowSubmitConfirm(true)} disabled={busy}
                     className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-50"
-                    style={{ background: COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.track}` }}>
+                    style={{ background: COLORS.track, color: COLORS.lane }}>
                     <RotateCw size={14} /> Enviar semana a mi coach
                   </button>
                 )}
