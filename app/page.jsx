@@ -407,10 +407,15 @@ function computeIntermediateRaceOverrides(student, raceGoalId, raceDateStr) {
 // avanza sola solo porque cambió la fecha — necesita esa confirmación real.
 function getActiveLogWeek(student) {
   const furthest = Math.max(1, ...Object.keys(student.weeks).map(Number));
+  let firstOpen = furthest;
   for (let n = 1; n <= furthest; n++) {
-    if (!student.weeks[n]?.submitted) return n;
+    if (!student.weeks[n]?.submitted) { firstOpen = n; break; }
   }
-  return furthest;
+  // No se adelanta al calendario: si el coach ya dejó lista la próxima semana, esa recién
+  // pasa a ser la semana activa cuando llega su lunes (a las 00:00 de la hora local del
+  // alumno, sea donde sea que esté). Hasta entonces sigue viéndose la semana en curso.
+  // Si el alumno viene atrasado, se respeta su semana pendiente: el mínimo se encarga.
+  return Math.min(firstOpen, Math.max(1, getTodayWeekNum(student)));
 }
 function getTaperWeeks(goalId) { return goalId === "42k" ? 2 : 1; }
 function getPhase(weeksToRace, goalId) {
@@ -5996,12 +6001,19 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
   const isViewingCurrent = !student || activeWeekNum === activeLogWeek;
   const week = student ? student.weeks[activeWeekNum] : null;
   const currentWeekData = student ? student.weeks[activeLogWeek] : null;
+  // La semana que se está viendo es un "adelanto" si su lunes todavía no llegó: se puede
+  // mirar, pero no marcar nada hasta que empiece de verdad.
+  const todayWeekNum = student ? getTodayWeekNum(student) : null;
+  const isPreviewWeek = !!(student && activeWeekNum > todayWeekNum);
+  // Una semana ya cerrada/enviada tampoco se edita: queda como registro terminado.
+  const isClosedWeek = !!week?.submitted;
+  const canEditWeek = !!(student && isViewingCurrent && !isPreviewWeek && !isClosedWeek);
   const todayDowIndex = (new Date().getDay() + 6) % 7; // 0=Lunes ... 6=Domingo
   const [dismissedYesterdayReminder, setDismissedYesterdayReminder] = useState(false);
   const [liveTrainingDayIdx, setLiveTrainingDayIdx] = useState(null);
   const yesterdayIdx = todayDowIndex - 1; // -1 si hoy es lunes: no hay día anterior que preguntar
-  const yesterdayDay = isViewingCurrent && currentWeekData && yesterdayIdx >= 0 ? currentWeekData.plan[yesterdayIdx] : null;
-  const yesterdayLog = isViewingCurrent && currentWeekData && yesterdayIdx >= 0 ? currentWeekData.log[yesterdayIdx] : null;
+  const yesterdayDay = canEditWeek && currentWeekData && yesterdayIdx >= 0 ? currentWeekData.plan[yesterdayIdx] : null;
+  const yesterdayLog = canEditWeek && currentWeekData && yesterdayIdx >= 0 ? currentWeekData.log[yesterdayIdx] : null;
   const needsYesterdayConfirm = !!(yesterdayDay?.paceKey && !yesterdayLog?.completed && !dismissedYesterdayReminder);
   const submitSlots = currentWeekData ? currentWeekData.plan.map((d, i) => ({ d, i })).filter((x) => !!x.d.paceKey) : [];
   const submitCompletedCount = currentWeekData ? submitSlots.filter((x) => currentWeekData.log[x.i]?.completed).length : 0;
@@ -6090,6 +6102,30 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
             </div>
           )}
 
+          {isPreviewWeek && (
+            <div className="rounded-xl p-4 mb-4" style={{ background: COLORS.moderate + "18", border: `1px solid ${COLORS.moderate}55` }}>
+              <div className="flex items-center gap-2 mb-1">
+                <Clock size={16} style={{ color: COLORS.moderate }} />
+                <span className="text-sm font-semibold" style={{ color: COLORS.textPrimary }}>Adelanto de la próxima semana</span>
+              </div>
+              <p className="text-sm" style={{ color: COLORS.textMuted }}>
+                Puedes ver lo que viene, pero todavía no se puede registrar nada. Se activa sola el lunes a las 00:00.
+              </p>
+            </div>
+          )}
+
+          {isClosedWeek && !waitingForCoach && (
+            <div className="rounded-xl p-4 mb-4" style={{ background: COLORS.easy + "18", border: `1px solid ${COLORS.easy}55` }}>
+              <div className="flex items-center gap-2 mb-1">
+                <Check size={16} style={{ color: COLORS.easy }} />
+                <span className="text-sm font-semibold" style={{ color: COLORS.textPrimary }}>Semana finalizada</span>
+              </div>
+              <p className="text-sm" style={{ color: COLORS.textMuted }}>
+                Esta semana ya está cerrada. Tu próxima semana ya está lista y se activa el lunes.
+              </p>
+            </div>
+          )}
+
           {waitingForCoach && currentWeekData && (
             <div className="rounded-xl p-4 mb-4" style={{ background: COLORS.easy + "18", border: `1px solid ${COLORS.easy}55` }}>
               <div className="flex items-center gap-2 mb-2">
@@ -6117,7 +6153,7 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
             </div>
           )}
 
-          {isViewingCurrent && !waitingForCoach && week.plan[todayDowIndex]?.paceKey && !week.log[todayDowIndex]?.completed && (
+          {canEditWeek && !waitingForCoach && week.plan[todayDowIndex]?.paceKey && !week.log[todayDowIndex]?.completed && (
             <button onClick={() => setLiveTrainingDayIdx(todayDowIndex)}
               className="w-full rounded-xl p-4 mb-4 flex items-center gap-3 text-left animate-fadein"
               style={{ background: COLORS.track, border: `2px solid ${COLORS.track}`, boxShadow: `0 0 0 4px ${COLORS.track}33` }}>
@@ -6132,7 +6168,7 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
           )}
 
           <div className="grid sm:grid-cols-2 gap-3 mb-4">
-            {week.plan.map((d, i) => <LapCard key={i} day={d} index={i} mode={!isViewingCurrent ? "view" : (waitingForCoach ? "view" : "log")} log={week.log[i]} onChangeLog={isViewingCurrent ? changeLog : undefined} isToday={isViewingCurrent && i === todayDowIndex} isRaceGoal={!isFitnessGoal(student.goal)} onStartLive={isViewingCurrent && !waitingForCoach ? (idx) => setLiveTrainingDayIdx(idx) : undefined} />)}
+            {week.plan.map((d, i) => <LapCard key={i} day={d} index={i} mode={canEditWeek && !waitingForCoach ? "log" : "view"} log={week.log[i]} onChangeLog={canEditWeek ? changeLog : undefined} isToday={canEditWeek && i === todayDowIndex} isRaceGoal={!isFitnessGoal(student.goal)} onStartLive={canEditWeek && !waitingForCoach ? (idx) => setLiveTrainingDayIdx(idx) : undefined} />)}
           </div>
 
           {liveTrainingDayIdx != null && week.plan[liveTrainingDayIdx] && (
@@ -6153,7 +6189,7 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
             <Download size={14} /> Descargar mi semana en PDF
           </button>
 
-          {!waitingForCoach && (
+          {canEditWeek && !waitingForCoach && (
             <>
               <div className="flex flex-wrap gap-2 items-center">
                 <span className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs"
