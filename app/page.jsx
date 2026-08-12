@@ -86,22 +86,27 @@ const BEGINNER_TRAIN_DAYS = [0, 2, 5]; // Lun, Mié, Sáb (principiante, 3x/sem)
 const FITNESS_GOAL_TRAIN_DAYS = [1, 2, 4, 6]; // Mar, Mié, Vie, Dom (intermedio1, 4x/sem)
 const BEGINNER_WARMUP_MIN = 5, BEGINNER_COOLDOWN_MIN = 5; // caminando, fijo en todas las semanas
 
+// Progresión en DOS FASES declaradas:
+//   Fase 1 (semanas 1-12): run/walk. Los minutos de trote suben sin retroceder nunca.
+//   Fase 2 (semanas 13-16): trote continuo. Arranca bajo a propósito — correr sin pausas
+//   es más exigente que la misma cantidad de minutos fraccionados — y sube hasta el objetivo
+//   final (45' / 7K continuos), que queda como el punto más alto de su fase.
 const FITNESS16_STAGES = [
-  { run: 2, walk: 1, reps: 6, label: "Semana 1" },
-  { run: 2, walk: 1, reps: 7, label: "Semana 2" },
-  { run: 3, walk: 1, reps: 6, label: "Semana 3" },
-  { run: 3, walk: 1, reps: 7, label: "Semana 4" },
-  { run: 4, walk: 1, reps: 6, label: "Semana 5" },
-  { run: 4, walk: 1, reps: 7, label: "Semana 6" },
-  { run: 5, walk: 1, reps: 6, label: "Semana 7" },
-  { run: 5, walk: 1, reps: 7, label: "Semana 8" },
-  { run: 6, walk: 1, reps: 6, label: "Semana 9" },
-  { run: 8, walk: 1, reps: 4, label: "Semana 10" },
-  { run: 10, walk: 1, reps: 4, label: "Semana 11" },
-  { run: 12, walk: 1, reps: 3, label: "Semana 12" },
-  { run: 15, walk: 1, reps: 3, label: "Semana 13" },
-  { run: 20, walk: 1, reps: 2, label: "Semana 14" },
-  { run: 30, walk: 0, reps: 1, label: "Semana 15 · continuo" },
+  { run: 2, walk: 1, reps: 6, label: "Semana 1" },    // 12' de trote
+  { run: 2, walk: 1, reps: 7, label: "Semana 2" },    // 14'
+  { run: 3, walk: 1, reps: 6, label: "Semana 3" },    // 18'
+  { run: 3, walk: 1, reps: 7, label: "Semana 4" },    // 21'
+  { run: 4, walk: 1, reps: 6, label: "Semana 5" },    // 24'
+  { run: 4, walk: 1, reps: 7, label: "Semana 6" },    // 28'
+  { run: 5, walk: 1, reps: 6, label: "Semana 7" },    // 30'
+  { run: 5, walk: 1, reps: 7, label: "Semana 8" },    // 35'
+  { run: 6, walk: 1, reps: 6, label: "Semana 9" },    // 36'
+  { run: 8, walk: 1, reps: 5, label: "Semana 10" },   // 40'  (antes 4 reps = 32', retrocedía)
+  { run: 10, walk: 1, reps: 4, label: "Semana 11" },  // 40'
+  { run: 12, walk: 1, reps: 4, label: "Semana 12" },  // 48'  (antes 3 reps = 36', retrocedía)
+  { run: 20, walk: 0, reps: 1, label: "Semana 13 · continuo" }, // inicio de la fase continua
+  { run: 28, walk: 0, reps: 1, label: "Semana 14 · continuo" },
+  { run: 36, walk: 0, reps: 1, label: "Semana 15 · continuo" },
   { run: 45, walk: 0, reps: 1, label: "Semana 16 · 7K continuo" },
 ];
 
@@ -131,15 +136,17 @@ function getDayVariant(stage, posIndex, totalDays) {
   }
   if (isMain) return { run: stage.run, walk: stage.walk, reps: stage.reps, tag: "principal" };
   if (posIndex === 0) {
-    // día corto: menos repeticiones, mismo bloque
-    return { run: stage.run, walk: stage.walk, reps: Math.max(2, Math.round(stage.reps * 0.7)), tag: "corto" };
+    // Día corto: dos repeticiones menos que el principal. Se escalona por resta y no por
+    // porcentaje porque, con pocas repeticiones, los porcentajes redondeaban al mismo número
+    // y dos días de la semana quedaban idénticos.
+    return { run: stage.run, walk: stage.walk, reps: Math.max(2, stage.reps - 2), tag: "corto" };
   }
   if (posIndex === 1) {
     // día variante: bloques de trote un poco más largos, menos repeticiones (estímulo distinto)
-    return { run: stage.run + 1, walk: stage.walk, reps: Math.max(2, Math.round(stage.reps * 0.6)), tag: "variante" };
+    return { run: stage.run + 1, walk: stage.walk, reps: Math.max(2, stage.reps - 2), tag: "variante" };
   }
-  // posIndex 2 (viernes en el plan de 4 días): un poco más que el día corto, menos que el principal
-  return { run: stage.run, walk: stage.walk, reps: Math.max(2, Math.round(stage.reps * 0.85)), tag: "medio" };
+  // posIndex 2 (viernes en el plan de 4 días): una repetición menos que el principal
+  return { run: stage.run, walk: stage.walk, reps: Math.max(2, stage.reps - 1), tag: "medio" };
 }
 const VARIANT_LABEL = { corto: "corto", variante: "variante", medio: "medio", principal: "principal" };
 
