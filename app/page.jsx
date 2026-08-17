@@ -4515,6 +4515,8 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
   const [showOtros, setShowOtros] = useState(false);
   const [showChangeGoal, setShowChangeGoal] = useState(false);
   const [showIntermediateRace, setShowIntermediateRace] = useState(false);
+  const [showRollback, setShowRollback] = useState(false);
+  const [rollbackStage, setRollbackStage] = useState(null);
   const [interRaceGoal, setInterRaceGoal] = useState("21k");
   const [interRaceDate, setInterRaceDate] = useState("");
   const [newPin, setNewPin] = useState("");
@@ -4555,6 +4557,8 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
     setShowChangeGoal(false);
     setShowIntermediateRace(false);
     setInterRaceDate("");
+    setShowRollback(false);
+    setRollbackStage(null);
     setPanoramaEdits({});
     setPanoramaLongEdits({});
     setQualityEdits({});
@@ -5083,6 +5087,33 @@ function applyIntermediateRaceDayPatch(student) {
   const plan = week.plan.map((d, i) => (i === sundayIdx ? patchedDay : d));
   return { ...student, weeks: { ...student.weeks, [student.currentWeek]: { ...week, plan } } };
 }
+// Retroceder a una etapa anterior del plan de fitness/principiante. No borra nada del
+// historial: crea una semana NUEVA que repite la etapa elegida, para retomar después de una
+// pausa larga (viaje, lesión) sin tener que reiniciar todo desde cero.
+const rollbackToStage = async (targetStage) => {
+  if (!student) return;
+  setBusy(true);
+  const stages = getStageTable(student.goal);
+  const stage = Math.max(0, Math.min(stages.length - 1, targetStage));
+  const nextWeekNum = student.currentWeek + 1;
+  const plan = buildBeginnerPlan(stage, student.goal, student.level, student.trainDays);
+  const note = `Se retoma en la etapa de ${stages[stage].label} (elegida por el coach al volver de una pausa).`;
+  const updated = {
+    ...student, currentWeek: nextWeekNum, beginnerStage: stage,
+    weeks: {
+      ...student.weeks,
+      [student.currentWeek]: { ...student.weeks[student.currentWeek], submitted: true },
+      [nextWeekNum]: { weeklyKm: null, phase: "principiante", plan, log: emptyLog(), note, submitted: false },
+    },
+  };
+  await safeSet(`student:${student.id}`, updated);
+  const freshRosterRb = (await safeGet("roster")) || [];
+  await safeSet("roster", freshRosterRb.map((r) => (r.id === student.id ? { ...r, weekNumber: nextWeekNum, waitingApproval: false } : r)));
+  setStudent(updated);
+  refreshRoster();
+  setShowRollback(false);
+  setBusy(false);
+};
 const resetPlan = async () => {
     if (!student) return;
     setBusy(true);
@@ -5658,6 +5689,13 @@ const resetPlan = async () => {
                       <Flag size={14} /> Carrera intermedia
                     </button>
                   )}
+                  {isViewingLive && (isFitnessGoal(student.goal) || student.level === "principiante") && (
+                    <button onClick={() => { setShowRollback((v) => !v); setRollbackStage((student.beginnerStage ?? 0)); }} disabled={busy}
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold"
+                      style={{ background: showRollback ? COLORS.track : COLORS.bg, color: COLORS.lane, border: `1px solid ${showRollback ? COLORS.track : COLORS.border}` }}>
+                      <ChevronLeft size={14} /> Retomar en otra semana
+                    </button>
+                  )}
                   {isViewingLive && (
                     <button onClick={togglePauseWeek} disabled={busy}
                       className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold"
@@ -5705,6 +5743,53 @@ const resetPlan = async () => {
               {showChangeGoal && (
                 <ChangeGoalForm student={student} busy={busy} onCancel={() => setShowChangeGoal(false)} onSave={changeGoal} />
               )}
+
+              {showRollback && (isFitnessGoal(student.goal) || student.level === "principiante") && (() => {
+                const stages = getStageTable(student.goal);
+                const current = student.beginnerStage ?? 0;
+                const sel = rollbackStage ?? current;
+                const s = stages[sel];
+                const detail = s.walk > 0
+                  ? `${s.reps} x (${s.run}' trote + ${s.walk}' caminata)`
+                  : `${s.run}' de trote continuo`;
+                return (
+                  <div className="rounded-xl p-4 mb-4" style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}` }}>
+                    <div className="flex items-center gap-2 mb-1">
+                      <ChevronLeft size={16} style={{ color: COLORS.track }} />
+                      <div className="text-sm font-semibold" style={{ color: COLORS.textPrimary, fontFamily: "'Oswald', sans-serif" }}>RETOMAR EN OTRA SEMANA</div>
+                    </div>
+                    <p className="text-xs mb-3" style={{ color: COLORS.textMuted }}>
+                      Después de una pausa larga (viaje, lesión), elige en qué punto del plan retomar.
+                      Se crea una semana nueva con esa carga — el historial anterior no se borra.
+                    </p>
+                    <label className="block text-[10px] uppercase tracking-wide mb-1" style={{ color: COLORS.textMuted }}>
+                      Retomar en
+                    </label>
+                    <select value={sel} onChange={(e) => setRollbackStage(Number(e.target.value))}
+                      className="w-full rounded px-3 py-2 text-sm mb-3" style={{ background: COLORS.bg, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
+                      {stages.map((st, i) => (
+                        <option key={i} value={i}>
+                          {st.label}{i === current ? " · etapa actual" : i < current ? "  (retrocede)" : "  (adelanta)"}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="rounded-lg px-3 py-2 mb-3" style={{ background: COLORS.bg, borderLeft: `3px solid ${COLORS.track}` }}>
+                      <div className="text-xs" style={{ color: COLORS.lane }}>
+                        Sesión principal: <span style={{ fontFamily: "'JetBrains Mono', monospace", color: COLORS.track }}>{detail}</span>
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <button onClick={() => rollbackToStage(sel)} disabled={busy}
+                        className="px-4 py-2 rounded-lg text-sm font-semibold" style={{ background: COLORS.track, color: COLORS.lane }}>
+                        Generar la semana con esta carga
+                      </button>
+                      <button onClick={() => setShowRollback(false)} className="px-3 py-2 rounded-lg text-sm" style={{ color: COLORS.textMuted }}>
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {showIntermediateRace && (
                 <div className="rounded-xl p-4 mb-4" style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}` }}>
