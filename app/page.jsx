@@ -1848,7 +1848,7 @@ function buildWeekProposal(student) {
     : computeAdherence(week.plan, week.log);
 
   if (student.level === "principiante" || isFitnessGoal(student.goal)) {
-    return { kind: "principiante", adherencePct, avgRpe, closedWeekNumber: student.currentWeek, closedWeeklyKm: week.weeklyKm, closedPhase: "principiante" };
+    return { kind: "principiante", adherencePct, avgRpe, wasPaused: !!week.paused, closedWeekNumber: student.currentWeek, closedWeeklyKm: week.weeklyKm, closedPhase: "principiante" };
   }
 
   const weeksToRaceToday = weeksBetween(student.raceDate);
@@ -1930,14 +1930,18 @@ function finalizeWeekPlan(student, proposal, confirmed) {
     const stages = getStageTable(student.goal);
     let nextStage = student.beginnerStage ?? 0;
     let note;
-    if (proposal.adherencePct >= 0.7) {
+    if (currentWeekData.paused) {
+      // Semana pausada (lesión/viaje): el alumno no entrenó, así que se repite la misma etapa.
+      // Avanzar aquí sería subirle la carga sin que haya hecho el trabajo previo.
+      note = `La semana anterior estuvo pausada (lesión/viaje): se repite la etapa de ${stages[nextStage].label} al retomar.`;
+    } else if (proposal.adherencePct >= 0.7) {
       const advanced = Math.min(stages.length - 1, nextStage + 1);
       note = `Adherencia buena (${Math.round(proposal.adherencePct * 100)}%): se avanza a la etapa de ${stages[advanced].label}.`;
       nextStage = advanced;
     } else {
       note = `Adherencia baja (${Math.round(proposal.adherencePct * 100)}%): se mantiene la etapa de ${stages[nextStage].label} para consolidar.`;
     }
-    if (nextStage === stages.length - 1) {
+    if (nextStage === stages.length - 1 && !currentWeekData.paused) {
       note += isFitnessGoal(student.goal)
         ? " ¡Tu alumno ya completó el plan! Ya puede correr de forma continua sin mayor dificultad."
         : " ¡Tu alumno ya puede correr 5K continuos! Considera cambiar su nivel.";
@@ -4149,7 +4153,11 @@ function ProposalPanel({ proposal, values, setValues, onConfirm, onCancel, busy,
       <div className="rounded-xl p-4 mb-4" style={{ background: COLORS.surface2, border: `1px solid ${COLORS.track}` }}>
         <div className="text-sm font-semibold mb-1" style={{ color: COLORS.textPrimary, fontFamily: "'Oswald', sans-serif" }}>PROPUESTA DE LA PRÓXIMA SEMANA</div>
         {weekDateRange && <div className="text-xs mb-2" style={{ color: COLORS.track, fontFamily: "'JetBrains Mono', monospace" }}>{weekDateRange}</div>}
-        <p className="text-xs mb-3" style={{ color: COLORS.textMuted }}>Se avanzará o mantendrá la etapa de acondicionamiento según la adherencia registrada.</p>
+        <p className="text-xs mb-3" style={{ color: COLORS.textMuted }}>
+          {proposal.wasPaused
+            ? "La semana anterior estuvo pausada (lesión/viaje): se repetirá la misma etapa al retomar, sin subir la carga."
+            : "Se avanzará o mantendrá la etapa de acondicionamiento según la adherencia registrada."}
+        </p>
         <div className="flex gap-2">
           <button onClick={() => onConfirm()} disabled={busy} className="px-4 py-1.5 rounded text-sm font-semibold" style={{ background: COLORS.track, color: COLORS.lane }}>Confirmar y generar</button>
           <button onClick={onCancel} className="px-3 py-1.5 rounded text-sm" style={{ color: COLORS.textMuted }}>Cancelar</button>
@@ -5650,7 +5658,7 @@ const resetPlan = async () => {
                       <Flag size={14} /> Carrera intermedia
                     </button>
                   )}
-                  {isViewingLive && student.level !== "principiante" && (
+                  {isViewingLive && (
                     <button onClick={togglePauseWeek} disabled={busy}
                       className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold"
                       style={{ background: week.paused ? COLORS.moderate : COLORS.bg, color: week.paused ? COLORS.bg : COLORS.lane, border: `1px solid ${week.paused ? COLORS.moderate : COLORS.border}` }}>
