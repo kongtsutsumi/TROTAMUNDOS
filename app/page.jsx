@@ -804,7 +804,7 @@ function getDayLayoutTemplate(goalId, phase, level, weeksToRace) {
    400 y 600 se extrapolan entre esos dos extremos.
    Intervalos: 1k-4k. 1k = ritmo de media maratón; 4k = ritmo maratón; 2k y 3k se extrapolan entre ambos. */
 const R_DISTANCES = [0.2, 0.4, 0.6, 0.8]; // 200, 400, 600, 800 m
-const R_RECOVERY_MIN = { 0.2: 1, 0.4: 1, 0.6: 1.5, 0.8: 2 }; // recuperación exacta: 200/400m=60", 600m=90", 800m=2'
+const R_RECOVERY_MIN = { 0.2: 1, 0.4: 2, 0.6: 3, 0.8: 4 }; // recuperación: 200m=1', 400m=2', 600m=3', 800m=4'
 const I_RECOVERY_DIST_KM = 0.5; // intervalos (cualquier distancia): descanso de 500m, convertido a minutos vía ritmo suave.
 function getIRecoveryMin(d, easyP) {
   return r1(I_RECOVERY_DIST_KM * (easyP || 5));
@@ -3362,7 +3362,7 @@ function ProgressChart({ student, activeWeekNum }) {
   );
 }
 
-function LapCard({ day, index, mode, log, onChangeDay, onChangeLog, isToday, isRaceGoal, onStartLive, onSwapDay }) {
+function LapCard({ day, index, mode, log, onChangeDay, onChangeLog, isToday, isRaceGoal, onStartLive, onSwapDay, onMoveSession }) {
   const zone = ZONE_BY_PACEKEY[day.paceKey] || "rest";
   const zoneColor = ZONE_COLOR[zone];
   const isRest = !day.paceKey;
@@ -3680,6 +3680,24 @@ function LapCard({ day, index, mode, log, onChangeDay, onChangeLog, isToday, isR
                   Sesión completada
                 </label>
                 <div className="flex items-center gap-2">
+                  {!log?.completed && onMoveSession && (
+                    <>
+                      {onMoveSession.canMove(index, index - 1) && (
+                        <button type="button" onClick={() => onMoveSession.move(index, index - 1)}
+                          title="Adelantar esta sesión un día"
+                          className="flex items-center text-xs px-1.5 py-1 rounded" style={{ background: COLORS.bg, color: COLORS.textMuted, border: `1px solid ${COLORS.border}` }}>
+                          <ChevronLeft size={11} />
+                        </button>
+                      )}
+                      {onMoveSession.canMove(index, index + 1) && (
+                        <button type="button" onClick={() => onMoveSession.move(index, index + 1)}
+                          title="Aplazar esta sesión un día"
+                          className="flex items-center text-xs px-1.5 py-1 rounded" style={{ background: COLORS.bg, color: COLORS.textMuted, border: `1px solid ${COLORS.border}` }}>
+                          <ChevronRight size={11} />
+                        </button>
+                      )}
+                    </>
+                  )}
                   {!log?.completed && onStartLive && (
                     <button type="button" onClick={() => onStartLive(index)}
                       className="flex items-center gap-1 text-xs px-2 py-1 rounded" style={{ background: COLORS.bg, color: COLORS.track, border: `1px solid ${COLORS.track}55` }}>
@@ -6043,6 +6061,35 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
   };
   // Si el alumno cierra o cambia de pantalla con algo sin guardar, se intenta guardar antes.
   useEffect(() => () => { if (pendingStudentRef.current) persistNow(); }, [persistNow]);
+  // El alumno puede mover una sesión a un día contiguo (el anterior o el siguiente), siempre
+  // que ese día esté libre y todavía no haya pasado. Intercambia el contenido de los dos días
+  // manteniendo la etiqueta de cada uno en su posición real de la semana.
+  const moveSession = async (fromIdx, toIdx) => {
+    if (!student) return;
+    const wk = getActiveLogWeek(student);
+    const week = student.weeks[wk];
+    const todayIdx = (new Date().getDay() + 6) % 7; // 0=Lunes ... 6=Domingo
+    if (!week || Math.abs(toIdx - fromIdx) !== 1) return;
+    if (toIdx < 0 || toIdx > 6) return;
+    if (week.plan[toIdx]?.paceKey) return;      // el día destino ya tiene entrenamiento
+    if (week.log[fromIdx]?.completed) return;   // ya la hizo, no tiene sentido moverla
+    if (toIdx < todayIdx) return;               // no se mueve a un día que ya pasó
+
+    const plan = [...week.plan];
+    const log = [...week.log];
+    const fromLabel = plan[fromIdx].day, toLabel = plan[toIdx].day;
+    plan[toIdx] = { ...plan[fromIdx], day: toLabel, movedFrom: fromLabel };
+    plan[fromIdx] = { ...week.plan[toIdx], day: fromLabel };
+    log[toIdx] = log[fromIdx];
+    log[fromIdx] = { completed: false, actualKm: "", actualPaceStr: "", rpe: "", note: "" };
+
+    const updated = { ...student, weeks: { ...student.weeks, [wk]: { ...week, plan, log } } };
+    setStudent(updated);
+    setBusy(true);
+    await safeSet(`student:${student.id}`, updated);
+    setBusy(false);
+    setSaved(true);
+  };
   // Guarda de inmediato el resultado del "entrenamiento en vivo" — a diferencia del resto del
   // registro manual, aquí tiene más sentido que quede guardado al toque, sin un paso extra.
   const saveLiveTrainingResult = async (index, entry) => {
@@ -6109,6 +6156,20 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
   const isClosedWeek = !!week?.submitted;
   const canEditWeek = !!(student && isViewingCurrent && !isPreviewWeek && !isClosedWeek);
   const todayDowIndex = (new Date().getDay() + 6) % 7; // 0=Lunes ... 6=Domingo
+  // En los planes de fitness el alumno puede mover una sesión a un día contiguo, para
+  // acomodarla a su semana sin depender del coach.
+  const canMoveSessions = !!(student && isFitnessGoal(student.goal) && canEditWeek && !waitingForCoach);
+  const moveHelper = {
+    canMove: (fromIdx, toIdx) => {
+      if (!week || toIdx < 0 || toIdx > 6) return false;
+      if (!week.plan[fromIdx]?.paceKey) return false;   // no hay sesión que mover
+      if (week.plan[toIdx]?.paceKey) return false;      // el destino ya tiene entrenamiento
+      if (week.log[fromIdx]?.completed) return false;   // ya la hizo
+      if (toIdx < todayDowIndex) return false;          // ese día ya pasó
+      return true;
+    },
+    move: (fromIdx, toIdx) => moveSession(fromIdx, toIdx),
+  };
   const [dismissedYesterdayReminder, setDismissedYesterdayReminder] = useState(false);
   const [liveTrainingDayIdx, setLiveTrainingDayIdx] = useState(null);
   const yesterdayIdx = todayDowIndex - 1; // -1 si hoy es lunes: no hay día anterior que preguntar
@@ -6268,7 +6329,7 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
           )}
 
           <div className="grid sm:grid-cols-2 gap-3 mb-4">
-            {week.plan.map((d, i) => <LapCard key={i} day={d} index={i} mode={canEditWeek && !waitingForCoach ? "log" : "view"} log={week.log[i]} onChangeLog={canEditWeek ? changeLog : undefined} isToday={canEditWeek && i === todayDowIndex} isRaceGoal={!isFitnessGoal(student.goal)} onStartLive={canEditWeek && !waitingForCoach ? (idx) => setLiveTrainingDayIdx(idx) : undefined} />)}
+            {week.plan.map((d, i) => <LapCard key={i} day={d} index={i} mode={canEditWeek && !waitingForCoach ? "log" : "view"} log={week.log[i]} onChangeLog={canEditWeek ? changeLog : undefined} isToday={canEditWeek && i === todayDowIndex} isRaceGoal={!isFitnessGoal(student.goal)} onStartLive={canEditWeek && !waitingForCoach ? (idx) => setLiveTrainingDayIdx(idx) : undefined} onMoveSession={canMoveSessions ? moveHelper : undefined} />)}
           </div>
 
           {liveTrainingDayIdx != null && week.plan[liveTrainingDayIdx] && (
