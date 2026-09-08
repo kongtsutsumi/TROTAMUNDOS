@@ -6156,6 +6156,19 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
   const isClosedWeek = !!week?.submitted;
   const canEditWeek = !!(student && isViewingCurrent && !isPreviewWeek && !isClosedWeek);
   const todayDowIndex = (new Date().getDay() + 6) % 7; // 0=Lunes ... 6=Domingo
+  const [dismissedYesterdayReminder, setDismissedYesterdayReminder] = useState(false);
+  const [liveTrainingDayIdx, setLiveTrainingDayIdx] = useState(null);
+  const yesterdayIdx = todayDowIndex - 1; // -1 si hoy es lunes: no hay día anterior que preguntar
+  const yesterdayDay = canEditWeek && currentWeekData && yesterdayIdx >= 0 ? currentWeekData.plan[yesterdayIdx] : null;
+  const yesterdayLog = canEditWeek && currentWeekData && yesterdayIdx >= 0 ? currentWeekData.log[yesterdayIdx] : null;
+  const needsYesterdayConfirm = !!(yesterdayDay?.paceKey && !yesterdayLog?.completed && !dismissedYesterdayReminder);
+  const submitSlots = currentWeekData ? currentWeekData.plan.map((d, i) => ({ d, i })).filter((x) => !!x.d.paceKey) : [];
+  const submitCompletedCount = currentWeekData ? submitSlots.filter((x) => currentWeekData.log[x.i]?.completed).length : 0;
+  const submitTotalCount = submitSlots.length;
+  // Ya no depende de la fecha: espera al coach solo cuando la última semana disponible ya
+  // fue confirmada (enviada) y todavía no hay una siguiente preparada.
+  const waitingForCoach = !!(currentWeekData?.submitted && activeLogWeek >= furthestApprovedWeek);
+
   // En los planes de fitness el alumno puede mover una sesión a un día contiguo, para
   // acomodarla a su semana sin depender del coach.
   const canMoveSessions = !!(student && isFitnessGoal(student.goal) && canEditWeek && !waitingForCoach);
@@ -6170,18 +6183,6 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
     },
     move: (fromIdx, toIdx) => moveSession(fromIdx, toIdx),
   };
-  const [dismissedYesterdayReminder, setDismissedYesterdayReminder] = useState(false);
-  const [liveTrainingDayIdx, setLiveTrainingDayIdx] = useState(null);
-  const yesterdayIdx = todayDowIndex - 1; // -1 si hoy es lunes: no hay día anterior que preguntar
-  const yesterdayDay = canEditWeek && currentWeekData && yesterdayIdx >= 0 ? currentWeekData.plan[yesterdayIdx] : null;
-  const yesterdayLog = canEditWeek && currentWeekData && yesterdayIdx >= 0 ? currentWeekData.log[yesterdayIdx] : null;
-  const needsYesterdayConfirm = !!(yesterdayDay?.paceKey && !yesterdayLog?.completed && !dismissedYesterdayReminder);
-  const submitSlots = currentWeekData ? currentWeekData.plan.map((d, i) => ({ d, i })).filter((x) => !!x.d.paceKey) : [];
-  const submitCompletedCount = currentWeekData ? submitSlots.filter((x) => currentWeekData.log[x.i]?.completed).length : 0;
-  const submitTotalCount = submitSlots.length;
-  // Ya no depende de la fecha: espera al coach solo cuando la última semana disponible ya
-  // fue confirmada (enviada) y todavía no hay una siguiente preparada.
-  const waitingForCoach = !!(currentWeekData?.submitted && activeLogWeek >= furthestApprovedWeek);
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-6">
