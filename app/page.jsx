@@ -1603,6 +1603,46 @@ function computeAdherence(plan, log) {
 }
 // Promedio histórico de adherencia de un alumno, considerando todas las semanas ya
 // cerradas o enviadas (no solo la última) — se recalcula cada vez que cierra una más.
+// Resumen de cumplimiento reciente de un alumno, para la lista del coach.
+// Devuelve DOS datos separados, porque miden cosas distintas:
+//   - sesiones: cuántas de las sesiones propuestas efectivamente hizo
+//   - volumen: qué proporción de los kilómetros planificados corrió (solo cuenta los días
+//     donde registró km reales; si no los anotó, ese día no distorsiona el promedio)
+// Se limita a las últimas semanas cerradas para reflejar el momento actual: una mala racha
+// de hace meses no debe seguir castigando el número para siempre.
+const ADHERENCE_RECENT_WEEKS = 4;
+function computeRecentCompliance(student, weeksBack = ADHERENCE_RECENT_WEEKS) {
+  const closed = Object.entries(student.weeks || {})
+    .map(([n, w]) => ({ n: Number(n), w }))
+    .filter((x) => x.w && (x.w.submitted || x.w.studentSubmitted))
+    .sort((a, b) => b.n - a.n)
+    .slice(0, weeksBack);
+  if (!closed.length) return null;
+
+  let sessionsDone = 0, sessionsTotal = 0;
+  let kmDone = 0, kmPlanned = 0;
+  for (const { w } of closed) {
+    if (!Array.isArray(w.plan) || !Array.isArray(w.log)) continue;
+    w.plan.forEach((d, i) => {
+      if (!d.paceKey) return;
+      sessionsTotal++;
+      const l = w.log[i];
+      if (!l?.completed) return;
+      sessionsDone++;
+      const hasKm = l.actualKm !== "" && l.actualKm !== null && l.actualKm !== undefined && !isNaN(Number(l.actualKm));
+      if (hasKm && d.km > 0) { kmDone += Number(l.actualKm); kmPlanned += d.km; }
+    });
+  }
+  if (!sessionsTotal) return null;
+  return {
+    weeks: closed.length,
+    sessionsDone, sessionsTotal,
+    sessionsPct: sessionsDone / sessionsTotal,
+    // null cuando el alumno no registró kilómetros en ninguna sesión: es más honesto
+    // mostrar "sin datos de volumen" que inventar un 100%.
+    volumePct: kmPlanned > 0 ? kmDone / kmPlanned : null,
+  };
+}
 function computeHistoricalAdherence(student) {
   // Solo cuentan las semanas que el propio alumno envió — el coach cerrando una semana
   // directamente (por ejemplo, preparando por adelantado) no debe afectar este promedio.
@@ -3183,16 +3223,29 @@ function PrintableWeek({ student, week, weekNum }) {
     </div>
   );
 }
-function AdherenceBadge({ pct }) {
-  if (pct === null || pct === undefined) return <Pill color={COLORS.textMuted}>Sin datos</Pill>;
-  const pctNum = Math.round(pct * 100);
-  let color = COLORS.moderate, Icon = Minus;
-  if (pct >= 0.9) { color = COLORS.easy; Icon = TrendingUp; }
-  else if (pct < 0.7) { color = COLORS.track; Icon = TrendingDown; }
+// Muestra el cumplimiento reciente en dos datos separados: sesiones hechas y volumen
+// corrido. Antes se combinaban en un solo porcentaje, lo que ocultaba la diferencia entre
+// "faltó a una sesión" y "las hizo todas pero más cortas".
+function AdherenceBadge({ compliance }) {
+  if (!compliance) return <Pill color={COLORS.textMuted}>Sin datos</Pill>;
+  const { sessionsDone, sessionsTotal, sessionsPct, volumePct, weeks } = compliance;
+  const sColor = sessionsPct >= 0.9 ? COLORS.easy : sessionsPct < 0.7 ? COLORS.track : COLORS.moderate;
+  const vPctNum = volumePct != null ? Math.round(volumePct * 100) : null;
+  const vColor = vPctNum == null ? COLORS.textMuted
+    : vPctNum >= 90 && vPctNum <= 110 ? COLORS.easy
+    : vPctNum < 75 || vPctNum > 125 ? COLORS.track : COLORS.moderate;
+  const title = `Últimas ${weeks} semana${weeks === 1 ? "" : "s"}: ${sessionsDone} de ${sessionsTotal} sesiones`
+    + (vPctNum != null ? ` · ${vPctNum}% del volumen planificado` : " · sin km registrados");
   return (
-    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold"
-      style={{ background: color + "22", color, border: `1px solid ${color}55` }}>
-      <Icon size={12} /> {pctNum}%
+    <span className="inline-flex items-center gap-1.5" title={title}>
+      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold"
+        style={{ background: sColor + "22", color: sColor, border: `1px solid ${sColor}55` }}>
+        {sessionsDone}/{sessionsTotal}
+      </span>
+      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold"
+        style={{ background: vColor + "22", color: vColor, border: `1px solid ${vColor}55` }}>
+        {vPctNum != null ? `${vPctNum}%` : "— km"}
+      </span>
     </span>
   );
 }
@@ -4522,6 +4575,7 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
   const [busy, setBusy] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
   const [justClosed, setJustClosed] = useState(null);
+  const [undoSnapshot, setUndoSnapshot] = useState(null);
   const [resetConfirm, setResetConfirm] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [showPinChange, setShowPinChange] = useState(false);
@@ -4577,6 +4631,7 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
     setInterRaceDate("");
     setShowRollback(false);
     setRollbackStage(null);
+    setUndoSnapshot(null);
     setPanoramaEdits({});
     setPanoramaLongEdits({});
     setQualityEdits({});
@@ -4714,11 +4769,17 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
   };
 
   const waitingCount = roster.filter((r) => r.waitingApproval).length;
-  const lowAdherenceCount = roster.filter((r) => r.lastAdherence != null && r.lastAdherence < 0.7).length;
+  // "Adherencia baja" ahora se mide por sesiones hechas en las últimas semanas, que es el
+  // dato que de verdad indica si el alumno está siguiendo el plan.
+  const isLowCompliance = (r) => {
+    const cp = rosterProgress[r.id]?.compliance;
+    return !!cp && cp.sessionsPct < 0.7;
+  };
+  const lowAdherenceCount = roster.filter(isLowCompliance).length;
   const pausedCount = roster.filter((r) => r.paused).length;
   let filteredRoster = search.trim() ? roster.filter((r) => r.name.toLowerCase().includes(search.toLowerCase())) : roster;
   if (statusFilter === "waiting") filteredRoster = filteredRoster.filter((r) => r.waitingApproval);
-  else if (statusFilter === "low") filteredRoster = filteredRoster.filter((r) => r.lastAdherence != null && r.lastAdherence < 0.7);
+  else if (statusFilter === "low") filteredRoster = filteredRoster.filter(isLowCompliance);
   else if (statusFilter === "paused") filteredRoster = filteredRoster.filter((r) => r.paused);
   if (goalFilter) filteredRoster = filteredRoster.filter((r) => r.goal === goalFilter);
   filteredRoster = [...filteredRoster].sort((a, b) => a.name.localeCompare(b.name, "es"));
@@ -4770,7 +4831,9 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
       // desalineaba los días y daba conteos menores a los reales.
       const total = (week.plan || []).filter((d) => !!d.paceKey).length;
       const completed = (week.plan || []).filter((d, i) => !!d.paceKey && week.log?.[i]?.completed).length;
-      entries[r.id] = { completed, total };
+      // El cumplimiento reciente se calcula aquí (y no en el roster) porque necesita el
+      // registro completo del alumno, no solo su resumen.
+      entries[r.id] = { completed, total, compliance: computeRecentCompliance(s) };
     }
     setRosterProgress(entries);
   }, [roster]);
@@ -4917,8 +4980,15 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
       }
     }
     setAnomalyWarnings(null);
+    const freshRoster3Before = (await safeGet("roster")) || [];
+    // Copia del estado ANTES de aplicar, para poder deshacer si el coach se arrepiente.
+    const snapshot = {
+      student: JSON.parse(JSON.stringify(student)),
+      roster: JSON.parse(JSON.stringify(freshRoster3Before)),
+      closedWeekNumber: proposal.closedWeekNumber,
+    };
     await safeSet(`student:${student.id}`, updated);
-    const freshRoster3 = (await safeGet("roster")) || [];
+    const freshRoster3 = freshRoster3Before;
     const newRoster = freshRoster3.map((r) => (r.id === student.id ? { ...r, weekNumber: updated.currentWeek, waitingApproval: false } : r));
     await safeSet("roster", newRoster);
     await pushReport({
@@ -4929,7 +4999,21 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
     setStudent(updated);
     refreshRoster();
     setJustClosed(note);
+    setUndoSnapshot(snapshot);
     setProposal(null);
+    setBusy(false);
+  };
+  // Deshacer el último cierre de semana: restaura el alumno y el listado tal como estaban
+  // justo antes de confirmar. Solo está disponible mientras no se salga de la pantalla.
+  const undoLastClose = async () => {
+    if (!undoSnapshot) return;
+    setBusy(true);
+    await safeSet(`student:${undoSnapshot.student.id}`, undoSnapshot.student);
+    await safeSet("roster", undoSnapshot.roster);
+    setStudent(undoSnapshot.student);
+    refreshRoster();
+    setUndoSnapshot(null);
+    setJustClosed(null);
     setBusy(false);
   };
 
@@ -5536,7 +5620,7 @@ const resetPlan = async () => {
                       {rosterProgress[r.id].completed} de {rosterProgress[r.id].total}
                     </span>
                   )}
-                  <AdherenceBadge pct={r.lastAdherence} />
+                  <AdherenceBadge compliance={rosterProgress[r.id]?.compliance} />
                   {selectedId === r.id ? <ChevronDown size={14} style={{ color: COLORS.track }} /> : <ChevronRight size={14} style={{ color: COLORS.textMuted }} />}
                 </div>
               </button>
@@ -5964,7 +6048,14 @@ const resetPlan = async () => {
               )}
               {justClosed && (
                 <div className="rounded-lg p-3 mb-4 text-sm" style={{ background: COLORS.easy + "18", border: `1px solid ${COLORS.easy}55`, color: COLORS.easy }}>
-                  Semana cerrada. Nuevo plan generado: {justClosed}
+                  <div className="mb-2">Semana cerrada. Nuevo plan generado: {justClosed}</div>
+                  {undoSnapshot && (
+                    <button onClick={undoLastClose} disabled={busy}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold"
+                      style={{ background: COLORS.bg, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
+                      <RotateCw size={12} style={{ transform: "scaleX(-1)" }} /> Deshacer — volver a la semana {undoSnapshot.closedWeekNumber}
+                    </button>
+                  )}
                 </div>
               )}
 
