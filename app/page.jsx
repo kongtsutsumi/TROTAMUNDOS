@@ -1,5 +1,5 @@
 "use client";
-import { safeGet, safeSet, safeDelete, safeGetWithRetry, safeGetPersonal, safeSetPersonal, safeDeletePersonal, authStatus, coachSetup, coachLogin, studentList, studentLogin, logout } from "../lib/storage";
+import { safeGet, safeSet, safeDelete, safeGetWithRetry, updateRosterEntry, safeGetPersonal, safeSetPersonal, safeDeletePersonal, authStatus, coachSetup, coachLogin, studentList, studentLogin, logout } from "../lib/storage";
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Users, User, Plus, ArrowLeft, Check, Flag, TrendingUp, TrendingDown,
@@ -6207,12 +6207,13 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
     const { adherencePct, avgRpe } = computeAdherence(week.plan, week.log);
     const updated = { ...student, weeks: { ...student.weeks, [wk]: { ...week, submitted: true, studentSubmitted: true, adherencePct, avgRpe } } };
     await safeSet(`student:${student.id}`, updated);
-    const roster = await safeGet("roster");
-    if (roster) {
-      const historicalAdherence = computeHistoricalAdherence(updated);
-      const newRoster = roster.map((r) => (r.id === student.id ? { ...r, lastAdherence: historicalAdherence, waitingApproval: true } : r));
-      await safeSet("roster", newRoster);
-    }
+    // Se actualiza SOLO la entrada de este alumno en el listado. Antes se reescribía la lista
+    // completa desde la copia del navegador, lo que podía borrar cambios hechos en paralelo
+    // (por ejemplo, si el coach acababa de cerrar la semana de otro alumno).
+    await updateRosterEntry(student.id, {
+      lastAdherence: computeHistoricalAdherence(updated),
+      waitingApproval: true,
+    });
     await pushReport({
       id: uid(), studentId: student.id, studentName: student.name, weekNumber: wk,
       weeklyKm: week.weeklyKm, phase: week.phase, adherencePct, avgRpe, note: "El alumno envió su semana para aprobación.",
