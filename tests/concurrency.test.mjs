@@ -121,6 +121,47 @@ console.log("▸ El coach no borra lo que el alumno ya marcó");
   check("Y el cambio del coach sí se aplica", db.weeks[3].plan[0].km === 18);
 }
 
+
+console.log("▸ Validación de las operaciones del servidor");
+{
+  // Las operaciones sobre el listado completo no llevan "key". Una validación demasiado
+  // estricta las rechazaba con error 400 y dejaba el panel sin datos.
+  const needsKey = (op) => op === "get" || op === "set" || op === "delete";
+  const rejected = (op, key) => !op || (needsKey(op) && !key);
+  check("rosterSummary se acepta sin key", !rejected("rosterSummary", undefined));
+  check("updateRosterEntry se acepta sin key", !rejected("updateRosterEntry", undefined));
+  check("get sigue exigiendo key", rejected("get", undefined));
+  check("set sigue exigiendo key", rejected("set", undefined));
+  check("Una petición sin operación se rechaza", rejected(undefined, "x"));
+}
+
+console.log("▸ Semanas sin registro no rompen la pantalla");
+{
+  // Una semana guardada sin "log" (o con uno más corto que el plan) hacía que la pantalla
+  // fallara entera al leer log[i]. Ahora se completa al vuelo antes de mostrarla.
+  const ensureWeekShape = (week) => {
+    if (!week) return week;
+    const plan = Array.isArray(week.plan) ? week.plan : [];
+    const log = Array.isArray(week.log) ? week.log : [];
+    if (log.length === plan.length) return week;
+    const fixed = plan.map((_, i) => log[i] || { completed: false, actualKm: "", actualPaceStr: "", rpe: "", note: "" });
+    return { ...week, plan, log: fixed };
+  };
+  const plan = [{ day: "Lun" }, { day: "Mar" }, { day: "Mié" }];
+
+  const sinLog = ensureWeekShape({ plan });
+  check("Una semana sin log recibe uno completo", sinLog.log.length === 3);
+  check("Sus entradas son válidas", sinLog.log.every((l) => l.completed === false));
+
+  const logCorto = ensureWeekShape({ plan, log: [{ completed: true }] });
+  check("Un log incompleto se rellena", logCorto.log.length === 3);
+  check("Y conserva lo que ya había", logCorto.log[0].completed === true);
+
+  const completa = { plan, log: [{ completed: true }, { completed: false }, { completed: false }] };
+  check("Una semana correcta no se altera", ensureWeekShape(completa) === completa);
+  check("Sin semana no falla", ensureWeekShape(null) === null);
+}
+
 console.log("\n" + "─".repeat(52));
 if (failed === 0) {
   console.log(`✓ ${passed} verificaciones, todas correctas.`);

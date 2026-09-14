@@ -383,14 +383,34 @@ function getTodayWeekNum(student) {
 // Cuando un alumno estuvo inactivo, el número de semana de su plan se queda atrás respecto
 // al calendario. Esta función rellena ese hueco marcando las semanas que pasaron sin
 // entrenar, para que el historial refleje lo que realmente ocurrió en vez de saltárselas.
+// Asegura que una semana tenga "log" completo antes de mostrarla. Protege contra registros
+// guardados por versiones anteriores que pudieran no tenerlo — leer log[i] sin esto rompe
+// la pantalla entera.
+function ensureWeekShape(week) {
+  if (!week) return week;
+  const plan = Array.isArray(week.plan) ? week.plan : [];
+  const log = Array.isArray(week.log) ? week.log : [];
+  if (log.length === plan.length) return week;
+  const fixed = plan.map((_, i) => log[i] || { completed: false, actualKm: "", actualPaceStr: "", rpe: "", note: "" });
+  return { ...week, plan, log: fixed };
+}
 function markInactiveWeeks(student, fromWeek, toWeek) {
   const weeks = { ...student.weeks };
   for (let n = fromWeek; n < toWeek; n++) {
     const existing = weeks[n];
     // Solo se marcan las que quedaron abiertas: las ya cerradas o pausadas se respetan.
     if (existing && (existing.submitted || existing.paused)) continue;
+    // Siempre se garantizan "plan" y "log": una semana sin ellos rompe las pantallas que
+    // recorren los días (el panel del coach lee week.log[i] directamente).
+    const plan = Array.isArray(existing?.plan) ? existing.plan : [];
+    const log = Array.isArray(existing?.log) && existing.log.length === plan.length
+      ? existing.log
+      : plan.map(() => ({ completed: false, actualKm: "", actualPaceStr: "", rpe: "", note: "" }));
     weeks[n] = {
-      ...(existing || { weeklyKm: null, phase: existing?.phase ?? "base", plan: existing?.plan ?? [], log: existing?.log ?? emptyLog() }),
+      weeklyKm: existing?.weeklyKm ?? null,
+      phase: existing?.phase ?? "base",
+      ...existing,
+      plan, log,
       submitted: true,
       inactive: true,
       note: "Semana sin actividad registrada.",
@@ -5349,7 +5369,7 @@ const resetPlan = async () => {
   const [viewedWeek, setViewedWeek] = useState(null);
   useEffect(() => { setViewedWeek(null); }, [student?.currentWeek]);
   const activeWeekNum = viewedWeek ?? (student ? student.currentWeek : null);
-  const week = student ? student.weeks[activeWeekNum] : null;
+  const week = student ? ensureWeekShape(student.weeks[activeWeekNum]) : null;
   const isViewingLive = !student || activeWeekNum === student.currentWeek;
   const panoramaData = student ? projectWeeklyVolumes(student) : { kind: "flat", rows: [] };
 
@@ -6283,7 +6303,7 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
   const activeLogWeek = student ? getActiveLogWeek(student) : null;
   const activeWeekNum = student ? Math.min(Math.max(viewedWeek ?? activeLogWeek, activeLogWeek), furthestApprovedWeek) : null;
   const isViewingCurrent = !student || activeWeekNum === activeLogWeek;
-  const week = student ? student.weeks[activeWeekNum] : null;
+  const week = student ? ensureWeekShape(student.weeks[activeWeekNum]) : null;
   const currentWeekData = student ? student.weeks[activeLogWeek] : null;
   // La semana que se está viendo es un "adelanto" si su lunes todavía no llegó: se puede
   // mirar, pero no marcar nada hasta que empiece de verdad.

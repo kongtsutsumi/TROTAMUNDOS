@@ -31,7 +31,10 @@ export async function POST(request) {
   let body;
   try { body = await request.json(); } catch (e) { return NextResponse.json({ error: "Petición inválida" }, { status: 400 }); }
   const { op, key, value } = body || {};
-  if (!op || !key) return NextResponse.json({ error: "Faltan datos" }, { status: 400 });
+  // Las operaciones que actúan sobre el listado completo (rosterSummary, updateRosterEntry)
+  // no llevan "key" — solo se exige para las que leen o escriben un registro concreto.
+  const needsKey = op === "get" || op === "set" || op === "delete";
+  if (!op || (needsKey && !key)) return NextResponse.json({ error: "Faltan datos" }, { status: 400 });
 
   if (op === "get") {
     if (!canRead(session, key)) return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
