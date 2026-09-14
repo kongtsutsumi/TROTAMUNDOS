@@ -1,5 +1,5 @@
 "use client";
-import { safeGet, safeSet, safeDelete, safeGetWithRetry, updateRosterEntry, safeGetPersonal, safeSetPersonal, safeDeletePersonal, authStatus, coachSetup, coachLogin, studentList, studentLogin, logout } from "../lib/storage";
+import { safeGet, safeSet, safeDelete, safeGetWithRetry, updateRosterEntry, fetchRosterSummary, safeGetPersonal, safeSetPersonal, safeDeletePersonal, authStatus, coachSetup, coachLogin, studentList, studentLogin, logout } from "../lib/storage";
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Users, User, Plus, ArrowLeft, Check, Flag, TrendingUp, TrendingDown,
@@ -4788,10 +4788,8 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
     try {
       const currentRoster = (await safeGet("roster")) || [];
       const students = {};
-      for (const r of currentRoster) {
-        const s = await safeGet(`student:${r.id}`);
-        if (s) students[r.id] = s;
-      }
+      const records = await Promise.all(currentRoster.map((r) => safeGet(`student:${r.id}`)));
+      currentRoster.forEach((r, idx) => { if (records[idx]) students[r.id] = records[idx]; });
       const allReports = (await safeGet("reports")) || [];
       const allAlerts = (await safeGet("paceAlerts")) || [];
       const coachAuthData = await safeGet("coachAuth");
@@ -4833,8 +4831,11 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
   const loadDailyActivity = async () => {
     setLoadingActivity(true);
     const rows = [];
-    for (const r of roster) {
-      const s = await safeGet(`student:${r.id}`);
+    // Igual que arriba: todas las peticiones en paralelo en vez de una por una.
+    const records = await Promise.all(roster.map((r) => safeGet(`student:${r.id}`)));
+    for (let idx = 0; idx < roster.length; idx++) {
+      const r = roster[idx];
+      const s = records[idx];
       if (!s) continue;
       // revisa la semana actual y la anterior, para no perder actividad de ayer/anteayer justo
       // cuando el coach ya haya cerrado la semana.
@@ -4865,25 +4866,17 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
   // Cuántos entrenos lleva registrados cada alumno esta semana (ej. "3 de 5") — se carga sola
   // cada vez que cambia la lista de alumnos, sin bloquear el resto del panel.
   const loadRosterProgress = useCallback(async () => {
-    const entries = {};
-    for (const r of roster) {
-      const s = await safeGet(`student:${r.id}`);
-      if (!s) continue;
-      const wk = s.currentWeek;
-      const week = s.weeks[wk];
-      if (!week) continue;
-      // Se cuenta sobre el plan completo para no perder la posición real de cada día:
-      // filtrar primero y luego buscar en el registro por el índice del array filtrado
-      // desalineaba los días y daba conteos menores a los reales.
-      const total = (week.plan || []).filter((d) => !!d.paceKey).length;
-      const completed = (week.plan || []).filter((d, i) => !!d.paceKey && week.log?.[i]?.completed).length;
-      // El cumplimiento reciente se calcula aquí (y no en el roster) porque necesita el
-      // registro completo del alumno, no solo su resumen.
-      entries[r.id] = { completed, total, compliance: computeRecentCompliance(s) };
-    }
-    setRosterProgress(entries);
-  }, [roster]);
-  useEffect(() => { loadRosterProgress(); }, [roster]);
+    // Una sola petición que devuelve el resumen ya calculado en el servidor. Antes se pedía
+    // el registro completo de cada alumno (una petición por alumno, con todo su historial)
+    // solo para mostrar "4/4 sesiones" — mucho más lento de lo necesario.
+    const summary = await fetchRosterSummary();
+    if (summary) setRosterProgress(summary);
+  }, []);
+  // Se recarga el progreso solo cuando cambia la composición real de la lista (alumnos o su
+  // semana), no en cada refresco. Antes, cualquier acción que refrescara el listado disparaba
+  // una recarga completa de todos los alumnos, aunque nada relevante hubiera cambiado.
+  const rosterSignature = roster.map((r) => `${r.id}:${r.weekNumber}:${r.waitingApproval ? 1 : 0}`).join("|");
+  useEffect(() => { loadRosterProgress(); }, [rosterSignature]);
 
   const createStudent = async ({ name, goal, level, pin, raceDate, targetPaceStr, peakKmOverride, fitnessStartWeek, planTiming, trainDays, forceCreate }) => {
     if (busy) return; // segunda capa: evita crear dos veces si algo dispara la acción por duplicado

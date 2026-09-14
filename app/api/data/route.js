@@ -103,6 +103,51 @@ export async function POST(request) {
     return NextResponse.json({ ok });
   }
 
+  if (op === "rosterSummary") {
+    // Devuelve solo el RESUMEN que necesita el panel del coach (sesiones hechas y volumen
+    // reciente de cada alumno), en una sola petición. Antes el navegador descargaba el
+    // historial completo de cada alumno para calcular lo mismo — cientos de KB innecesarios
+    // y una petición por alumno.
+    if (session.role !== "coach") return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
+    const roster = (await kvGet("roster")) || [];
+    const records = await Promise.all(roster.map((r) => kvGet(`student:${r.id}`)));
+    const summary = {};
+    roster.forEach((r, i) => {
+      const s = records[i];
+      if (!s) return;
+      const week = s.weeks?.[s.currentWeek];
+      const total = (week?.plan || []).filter((d) => d.paceKey).length;
+      const completed = (week?.plan || []).filter((d, k) => d.paceKey && week.log?.[k]?.completed).length;
+      // Cumplimiento de las últimas semanas cerradas (mismo criterio que la app).
+      const closed = Object.entries(s.weeks || {})
+        .map(([n, w]) => ({ n: Number(n), w }))
+        .filter((x) => x.w && (x.w.submitted || x.w.studentSubmitted))
+        .sort((a, b) => b.n - a.n).slice(0, 4);
+      let sDone = 0, sTotal = 0, kmDone = 0, kmPlanned = 0;
+      for (const { w } of closed) {
+        if (!Array.isArray(w.plan) || !Array.isArray(w.log)) continue;
+        w.plan.forEach((d, k) => {
+          if (!d.paceKey) return;
+          sTotal++;
+          const l = w.log[k];
+          if (!l?.completed) return;
+          sDone++;
+          const km = Number(l.actualKm);
+          if (l.actualKm !== "" && l.actualKm != null && !isNaN(km) && d.km > 0) { kmDone += km; kmPlanned += d.km; }
+        });
+      }
+      summary[r.id] = {
+        completed, total,
+        compliance: sTotal ? {
+          weeks: closed.length, sessionsDone: sDone, sessionsTotal: sTotal,
+          sessionsPct: sDone / sTotal,
+          volumePct: kmPlanned > 0 ? kmDone / kmPlanned : null,
+        } : null,
+      };
+    });
+    return NextResponse.json({ summary });
+  }
+
   if (op === "updateRosterEntry") {
     // Actualiza SOLO la entrada de un alumno dentro del listado, en vez de reescribir la lista
     // completa. Evita que dos acciones casi simultáneas (por ejemplo, cerrar la semana de un
