@@ -594,6 +594,59 @@ console.log("▸ Cumplimiento reciente del alumno");
 }
 
 // ============================================================
+// 17. RETOMAR TRAS UN PERÍODO DE INACTIVIDAD
+// ============================================================
+console.log("▸ Cambiar de objetivo tras una inactividad");
+{
+  const RealDate = Date;
+  const setToday = (iso) => {
+    const fixed = new RealDate(iso + "T12:00:00");
+    globalThis.Date = class extends RealDate {
+      constructor(...a) { if (a.length === 0) super(fixed.getTime()); else super(...a); }
+      static now() { return fixed.getTime(); }
+    };
+  };
+  const restore = () => { globalThis.Date = RealDate; };
+
+  // Alumno que empezó el 3 de agosto y se detuvo en la semana 3.
+  const student = {
+    goal: "10k", level: "intermedio1", currentWeek: 3, planStartMonday: "2026-08-03",
+    weeks: {
+      1: { submitted: true, plan: [], log: [] },
+      2: { submitted: true, plan: [], log: [] },
+      3: { submitted: false, plan: [{ day: "Lun", km: 5 }], log: [{ completed: false }] },
+    },
+  };
+
+  setToday("2026-09-07"); // tres semanas después
+  const todayWeek = E.getTodayWeekNum(student);
+  check("La semana de calendario avanzó aunque el plan no", todayWeek === 6, `dio ${todayWeek}`);
+
+  const resumeWeek = Math.max(student.currentWeek, todayWeek);
+  check("El plan nuevo se genera en la semana de hoy, no en la del pasado", resumeWeek === 6);
+
+  const marked = E.markInactiveWeeks(student, student.currentWeek, resumeWeek);
+  check("Las semanas sin actividad quedan marcadas",
+    marked[3].inactive && marked[4].inactive && marked[5].inactive);
+  check("Las semanas marcadas se dan por cerradas", marked[3].submitted === true);
+  check("No se tocan las semanas ya cerradas antes",
+    !marked[1].inactive && !marked[2].inactive);
+
+  // Un alumno al día no debe verse afectado.
+  const upToDate = { ...student, currentWeek: 6 };
+  const untouched = E.markInactiveWeeks(upToDate, 6, 6);
+  check("Un alumno al día no genera semanas inactivas",
+    !Object.values(untouched).some((w) => w.inactive));
+
+  // Una semana pausada no debe marcarse como inactiva: son cosas distintas.
+  const withPause = { ...student, weeks: { ...student.weeks, 3: { submitted: false, paused: true, plan: [], log: [] } } };
+  const pauseKept = E.markInactiveWeeks(withPause, 3, 6);
+  check("Una semana pausada se respeta, no se marca como inactiva", !pauseKept[3].inactive);
+
+  restore();
+}
+
+// ============================================================
 // RESULTADO
 // ============================================================
 console.log("\n" + "─".repeat(52));

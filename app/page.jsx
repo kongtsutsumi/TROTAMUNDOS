@@ -380,6 +380,24 @@ function getTodayWeekNum(student) {
 }
 // Qué número de semana le corresponde a una fecha cualquiera (no necesariamente hoy) —
 // usado para ubicar una carrera intermedia dentro del calendario del alumno.
+// Cuando un alumno estuvo inactivo, el número de semana de su plan se queda atrás respecto
+// al calendario. Esta función rellena ese hueco marcando las semanas que pasaron sin
+// entrenar, para que el historial refleje lo que realmente ocurrió en vez de saltárselas.
+function markInactiveWeeks(student, fromWeek, toWeek) {
+  const weeks = { ...student.weeks };
+  for (let n = fromWeek; n < toWeek; n++) {
+    const existing = weeks[n];
+    // Solo se marcan las que quedaron abiertas: las ya cerradas o pausadas se respetan.
+    if (existing && (existing.submitted || existing.paused)) continue;
+    weeks[n] = {
+      ...(existing || { weeklyKm: null, phase: existing?.phase ?? "base", plan: existing?.plan ?? [], log: existing?.log ?? emptyLog() }),
+      submitted: true,
+      inactive: true,
+      note: "Semana sin actividad registrada.",
+    };
+  }
+  return weeks;
+}
 function getWeekNumForDate(student, dateStr) {
   const planStartMonday = student.planStartMonday ? new Date(student.planStartMonday + "T00:00:00") : mondayOf(new Date());
   const target = new Date(dateStr + "T00:00:00");
@@ -4689,17 +4707,26 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
     // si no lo cambia, se mantiene el que ya tenía.
     const newLevel = level || student.level;
     const applyNext = applyTiming === "next";
-    const targetWeekNum = applyNext ? student.currentWeek + 1 : student.currentWeek;
-    const existingTargetWeek = student.weeks[targetWeekNum];
+    // Si el alumno estuvo inactivo, su semana de plan quedó atrás respecto al calendario.
+    // El plan nuevo debe arrancar en la semana que le corresponde HOY — si no, se generaría
+    // en una semana del pasado y el alumno nunca lo vería.
+    const todayWeek = getTodayWeekNum(student);
+    const resumeWeek = Math.max(student.currentWeek, todayWeek);
+    const targetWeekNum = applyNext ? resumeWeek + 1 : resumeWeek;
+    // Las semanas que pasaron sin actividad se marcan como tales, para que el historial
+    // muestre el hueco en vez de saltárselo.
+    const baseWeeks = markInactiveWeeks(student, student.currentWeek, targetWeekNum);
+    const studentForChange = { ...student, weeks: baseWeeks };
+    const existingTargetWeek = baseWeeks[targetWeekNum];
     let updated;
     if (isFitnessGoal(goal)) {
       const plan = buildBeginnerPlan(0, goal, newLevel, student.trainDays);
       const weekEntry = { weeklyKm: null, phase: "principiante", plan, log: emptyLog(), note: `Objetivo actualizado: ${GOAL_LABEL[goal]}.`, submitted: false };
       updated = {
-        ...student, goal, level: newLevel, raceDate: null, targetPaceStr: null, paces: {}, peakKm: null, peakLongKm: null,
+        ...studentForChange, goal, level: newLevel, raceDate: null, targetPaceStr: null, paces: {}, peakKm: null, peakLongKm: null,
         volumeOverrides: {}, longRunOverrides: {}, qualityStreaks: { q1: 0, q2: 0 },
         weeksToRace: null, currentWeek: targetWeekNum, beginnerStage: 0,
-        weeks: { ...student.weeks, [targetWeekNum]: weekEntry },
+        weeks: { ...baseWeeks, [targetWeekNum]: weekEntry },
       };
     } else if (newLevel === "principiante") {
       const vdot = computeVDOT(DISTANCE_KM[goal], parsePaceToDecimal(targetPaceStr));
@@ -4712,9 +4739,9 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
         ? { weeklyKm: null, phase: "principiante", plan, log: emptyLog(), note: `Objetivo actualizado: ${GOAL_LABEL[goal]}.`, submitted: false }
         : { ...existingTargetWeek, plan, note: `Objetivo actualizado: ${GOAL_LABEL[goal]}.` };
       updated = {
-        ...student, goal, level: newLevel, raceDate, targetPaceStr, paces, peakKm, currentWeek: targetWeekNum, weeksToRace: weeksBetween(raceDate),
+        ...studentForChange, goal, level: newLevel, raceDate, targetPaceStr, paces, peakKm, currentWeek: targetWeekNum, weeksToRace: weeksBetween(raceDate),
         volumeOverrides: {}, longRunOverrides: {}, qualityStreaks: { q1: 0, q2: 0 },
-        weeks: { ...student.weeks, [targetWeekNum]: weekEntry },
+        weeks: { ...baseWeeks, [targetWeekNum]: weekEntry },
       };
     } else {
       const vdot = computeVDOT(DISTANCE_KM[goal], parsePaceToDecimal(targetPaceStr));
@@ -4730,9 +4757,9 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
         ? { weeklyKm, phase, plan, log: emptyLog(), note, submitted: false }
         : { ...existingTargetWeek, weeklyKm, phase, plan, note };
       updated = {
-        ...student, goal, level: newLevel, raceDate, targetPaceStr, paces, peakKm, peakLongKm, weeksToRace, currentWeek: targetWeekNum,
+        ...studentForChange, goal, level: newLevel, raceDate, targetPaceStr, paces, peakKm, peakLongKm, weeksToRace, currentWeek: targetWeekNum,
         volumeOverrides: {}, longRunOverrides: {}, qualityStreaks: { q1: 0, q2: 0 },
-        weeks: { ...student.weeks, [targetWeekNum]: weekEntry },
+        weeks: { ...baseWeeks, [targetWeekNum]: weekEntry },
       };
     }
     await safeSet(`student:${student.id}`, updated);
@@ -6059,7 +6086,13 @@ const resetPlan = async () => {
                   weekDateRange={getWeekDateRange(student, student.currentWeek + 1)} />
               )}
 
-              {week.note && (
+              {week.inactive && (
+                <div className="rounded-lg p-3 mb-4 text-sm flex items-start gap-2" style={{ background: COLORS.moderate + "18", border: `1px solid ${COLORS.moderate}55`, color: COLORS.moderate }}>
+                  <Clock size={14} style={{ marginTop: 2, flexShrink: 0 }} />
+                  Semana sin actividad registrada — el alumno no entrenó ni registró nada en estas fechas.
+                </div>
+              )}
+              {week.note && !week.inactive && (
                 <div className="rounded-lg p-3 mb-4 text-sm flex items-start gap-2" style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, color: COLORS.textMuted }}>
                   <Flag size={14} style={{ color: COLORS.track, marginTop: 2, flexShrink: 0 }} />
                   {week.note}
