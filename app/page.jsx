@@ -3954,6 +3954,7 @@ function StudentGate({ roster, onSuccess, onBack }) {
 --------------------------------------------------------- */
 function ChangeGoalForm({ student, onCancel, onSave, busy }) {
   const [goal, setGoal] = useState(student.goal);
+  const [level, setLevel] = useState(student.level);
   const [raceDate, setRaceDate] = useState(student.raceDate || "");
   const [raceDateText, setRaceDateText] = useState(formatISOToDDMMYY(student.raceDate));
   const [goalInputMode, setGoalInputMode] = useState("pace");
@@ -3963,7 +3964,12 @@ function ChangeGoalForm({ student, onCancel, onSave, busy }) {
   const [applyTiming, setApplyTiming] = useState("current"); // "current" | "next"
   const [error, setError] = useState("");
   const needsRaceInfo = !isFitnessGoal(goal);
-  const goalOptions = GOALS.filter((g) => !isFitnessGoal(g.id) || FITNESS_GOAL_LEVELS.includes(student.level));
+  const goalOptions = GOALS.filter((g) => !isFitnessGoal(g.id) || FITNESS_GOAL_LEVELS.includes(level));
+  // Si el nivel elegido ya no admite el objetivo actual (ej. pasar a un nivel sin planes de
+  // fitness), se corrige solo para no quedar en una combinación imposible.
+  useEffect(() => {
+    if (!goalOptions.some((g) => g.id === goal)) setGoal(goalOptions[0]?.id ?? goal);
+  }, [level]);
 
   const submit = () => {
     let finalPaceStr = targetPaceStr;
@@ -3980,7 +3986,7 @@ function ChangeGoalForm({ student, onCancel, onSave, busy }) {
     const peakKmManual = peakKmOverride.trim() !== "" ? Number(peakKmOverride) : null;
     if (peakKmManual != null && (isNaN(peakKmManual) || peakKmManual <= 0)) return setError("El km pico debe ser un número positivo.");
     setError("");
-    onSave({ goal, raceDate: needsRaceInfo ? raceDate : null, targetPaceStr: needsRaceInfo ? finalPaceStr : null, peakKmOverride: peakKmManual, applyTiming });
+    onSave({ goal, level, raceDate: needsRaceInfo ? raceDate : null, targetPaceStr: needsRaceInfo ? finalPaceStr : null, peakKmOverride: peakKmManual, applyTiming });
   };
 
   return (
@@ -3996,10 +4002,20 @@ function ChangeGoalForm({ student, onCancel, onSave, busy }) {
         </select>
       </div>
       <div className="grid sm:grid-cols-2 gap-3">
-        <select value={goal} onChange={(e) => setGoal(e.target.value)} className="rounded px-3 py-2 text-sm" style={{ background: COLORS.bg, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
-          {goalOptions.map((g) => <option key={g.id} value={g.id}>{g.label}</option>)}
-        </select>
-        <div />
+        <div>
+          <label className="block text-[10px] uppercase tracking-wide mb-1" style={{ color: COLORS.textMuted }}>Objetivo</label>
+          <select value={goal} onChange={(e) => setGoal(e.target.value)} className="w-full rounded px-3 py-2 text-sm" style={{ background: COLORS.bg, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
+            {goalOptions.map((g) => <option key={g.id} value={g.id}>{g.label}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="block text-[10px] uppercase tracking-wide mb-1" style={{ color: COLORS.textMuted }}>
+            Nivel {level !== student.level && <span style={{ color: COLORS.track }}>· cambia de {LEVELS.find((l) => l.id === student.level)?.days} a {LEVELS.find((l) => l.id === level)?.days} días</span>}
+          </label>
+          <select value={level} onChange={(e) => setLevel(e.target.value)} className="w-full rounded px-3 py-2 text-sm" style={{ background: COLORS.bg, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
+            {LEVELS.map((l) => <option key={l.id} value={l.id}>{l.label} · {l.days}x/sem</option>)}
+          </select>
+        </div>
         {needsRaceInfo && (
           <>
             <div>
@@ -4666,34 +4682,37 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
     setBusy(false);
   };
 
-  const changeGoal = async ({ goal, raceDate, targetPaceStr, peakKmOverride, applyTiming }) => {
+  const changeGoal = async ({ goal, level, raceDate, targetPaceStr, peakKmOverride, applyTiming }) => {
     if (!student) return;
     setBusy(true);
+    // El coach puede cambiar también el nivel (días por semana) junto con el objetivo;
+    // si no lo cambia, se mantiene el que ya tenía.
+    const newLevel = level || student.level;
     const applyNext = applyTiming === "next";
     const targetWeekNum = applyNext ? student.currentWeek + 1 : student.currentWeek;
     const existingTargetWeek = student.weeks[targetWeekNum];
     let updated;
     if (isFitnessGoal(goal)) {
-      const plan = buildBeginnerPlan(0, goal, student.level, student.trainDays);
+      const plan = buildBeginnerPlan(0, goal, newLevel, student.trainDays);
       const weekEntry = { weeklyKm: null, phase: "principiante", plan, log: emptyLog(), note: `Objetivo actualizado: ${GOAL_LABEL[goal]}.`, submitted: false };
       updated = {
-        ...student, goal, raceDate: null, targetPaceStr: null, paces: {}, peakKm: null, peakLongKm: null,
+        ...student, goal, level: newLevel, raceDate: null, targetPaceStr: null, paces: {}, peakKm: null, peakLongKm: null,
         volumeOverrides: {}, longRunOverrides: {}, qualityStreaks: { q1: 0, q2: 0 },
         weeksToRace: null, currentWeek: targetWeekNum, beginnerStage: 0,
         weeks: { ...student.weeks, [targetWeekNum]: weekEntry },
       };
-    } else if (student.level === "principiante") {
+    } else if (newLevel === "principiante") {
       const vdot = computeVDOT(DISTANCE_KM[goal], parsePaceToDecimal(targetPaceStr));
       const paces = computeTrainingPaces(vdot);
       paces.race = parsePaceToDecimal(targetPaceStr);
       anchorPacesToGoal(paces, goal);
-      const peakKm = peakKmOverride || computePeakKm(goal, student.level, vdot);
-      const plan = buildBeginnerPlan(student.beginnerStage ?? 0, "fitness", student.level, student.trainDays);
+      const peakKm = peakKmOverride || computePeakKm(goal, newLevel, vdot);
+      const plan = buildBeginnerPlan(student.beginnerStage ?? 0, "fitness", newLevel, student.trainDays);
       const weekEntry = applyNext
         ? { weeklyKm: null, phase: "principiante", plan, log: emptyLog(), note: `Objetivo actualizado: ${GOAL_LABEL[goal]}.`, submitted: false }
         : { ...existingTargetWeek, plan, note: `Objetivo actualizado: ${GOAL_LABEL[goal]}.` };
       updated = {
-        ...student, goal, raceDate, targetPaceStr, paces, peakKm, currentWeek: targetWeekNum, weeksToRace: weeksBetween(raceDate),
+        ...student, goal, level: newLevel, raceDate, targetPaceStr, paces, peakKm, currentWeek: targetWeekNum, weeksToRace: weeksBetween(raceDate),
         volumeOverrides: {}, longRunOverrides: {}, qualityStreaks: { q1: 0, q2: 0 },
         weeks: { ...student.weeks, [targetWeekNum]: weekEntry },
       };
@@ -4702,24 +4721,24 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
       const paces = computeTrainingPaces(vdot);
       paces.race = parsePaceToDecimal(targetPaceStr);
       anchorPacesToGoal(paces, goal);
-      const peakKm = peakKmOverride || computePeakKm(goal, student.level, vdot);
-      const peakLongKm = capLongRunKm(goal, student.level, 999);
+      const peakKm = peakKmOverride || computePeakKm(goal, newLevel, vdot);
+      const peakLongKm = capLongRunKm(goal, newLevel, 999);
       const weeksToRace = weeksBetween(raceDate);
-      const { phase, weeklyKm, plan } = buildInitialRacePlan(goal, student.level, peakKm, peakLongKm, weeksToRace, paces);
+      const { phase, weeklyKm, plan } = buildInitialRacePlan(goal, newLevel, peakKm, peakLongKm, weeksToRace, paces);
       const note = `Objetivo actualizado: ${GOAL_LABEL[goal]}. Fase: ${PHASE_LABEL[phase]}.`;
       const weekEntry = applyNext
         ? { weeklyKm, phase, plan, log: emptyLog(), note, submitted: false }
         : { ...existingTargetWeek, weeklyKm, phase, plan, note };
       updated = {
-        ...student, goal, raceDate, targetPaceStr, paces, peakKm, peakLongKm, weeksToRace, currentWeek: targetWeekNum,
+        ...student, goal, level: newLevel, raceDate, targetPaceStr, paces, peakKm, peakLongKm, weeksToRace, currentWeek: targetWeekNum,
         volumeOverrides: {}, longRunOverrides: {}, qualityStreaks: { q1: 0, q2: 0 },
         weeks: { ...student.weeks, [targetWeekNum]: weekEntry },
       };
     }
     await safeSet(`student:${student.id}`, updated);
-    const freshRoster1 = (await safeGet("roster")) || [];
-    const newRoster = freshRoster1.map((r) => (r.id === student.id ? { ...r, goal: updated.goal, raceDate: updated.raceDate, weekNumber: updated.currentWeek } : r));
-    await safeSet("roster", newRoster);
+    await updateRosterEntry(student.id, {
+      goal: updated.goal, level: updated.level, raceDate: updated.raceDate, weekNumber: updated.currentWeek,
+    });
     setStudent(updated);
     refreshRoster();
     setShowChangeGoal(false);
