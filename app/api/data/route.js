@@ -119,8 +119,8 @@ export async function POST(request) {
       const s = records[i];
       if (!s) return;
       const week = s.weeks?.[s.currentWeek];
-      const total = (week?.plan || []).filter((d) => d.paceKey).length;
-      const completed = (week?.plan || []).filter((d, k) => d.paceKey && week.log?.[k]?.completed).length;
+      const total = (week?.plan || []).filter((d) => d?.paceKey).length;
+      const completed = (week?.plan || []).filter((d, k) => d?.paceKey && week.log?.[k]?.completed).length;
       // Cumplimiento de las últimas semanas cerradas (mismo criterio que la app).
       const closed = Object.entries(s.weeks || {})
         .map(([n, w]) => ({ n: Number(n), w }))
@@ -130,7 +130,7 @@ export async function POST(request) {
       for (const { w } of closed) {
         if (!Array.isArray(w.plan) || !Array.isArray(w.log)) continue;
         w.plan.forEach((d, k) => {
-          if (!d.paceKey) return;
+          if (!d?.paceKey) return;
           sTotal++;
           const l = w.log[k];
           if (!l?.completed) return;

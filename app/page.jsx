@@ -1619,10 +1619,15 @@ function SessionBarChart({ day }) {
 function emptyLog() {
   return Array(7).fill(null).map(() => ({ completed: false, actualKm: "", actualPaceStr: "", rpe: "", note: "" }));
 }
-function computeAdherence(plan, log) {
+function computeAdherence(planRaw, logRaw) {
+  // Tolerante con semanas incompletas: el historial puede contener semanas sin plan ni
+  // registro (por ejemplo, las marcadas como "sin actividad"), y recorrerlas sin esta
+  // protección tumbaba la pantalla entera del alumno.
+  const plan = Array.isArray(planRaw) ? planRaw : [];
+  const log = Array.isArray(logRaw) ? logRaw : [];
   let total = 0, completed = 0, rpeSum = 0, rpeCount = 0, pctSum = 0;
   plan.forEach((d, i) => {
-    if (!d.paceKey) return;
+    if (!d || !d.paceKey) return;
     total++;
     const l = log[i];
     let dayPct = 0;
@@ -2294,7 +2299,7 @@ function Pill({ children, color }) {
 // conclusiones/recomendaciones generadas con reglas simples según esos números.
 function buildWeeklyReportData(student, weekRaw, weekNum) {
   const week = ensureWeekShape(weekRaw);
-  const slots = (week?.plan || []).map((d, i) => ({ d, i })).filter((x) => !!x.d.paceKey);
+  const slots = (week?.plan || []).map((d, i) => ({ d, i })).filter((x) => !!x.d?.paceKey);
   const completedSlots = slots.filter((x) => week.log[x.i]?.completed);
   const daysPlanned = slots.length;
   const daysCompleted = completedSlots.length;
@@ -2308,7 +2313,7 @@ function buildWeeklyReportData(student, weekRaw, weekNum) {
   const avgRpe = rpeValues.length ? r1(rpeValues.reduce((a, b) => a + b, 0) / rpeValues.length) : null;
   const qualityTypes = ["R", "I", "T", "brokenT", "M", "race", "combo1k500"];
   const paceComparisons = completedSlots
-    .filter((x) => qualityTypes.includes(x.d.paceKey))
+    .filter((x) => qualityTypes.includes(x.d?.paceKey))
     .map((x) => {
       const l = week.log[x.i];
       const target = getRepresentativePace(x.d);
@@ -3308,11 +3313,11 @@ function SessionDetail({ segments }) {
 // tuvo una adherencia de 90% o más.
 function computeStreak(student) {
   const weekNums = Object.keys(student.weeks).map(Number)
-    .filter((n) => student.weeks[n].studentSubmitted)
+    .filter((n) => student.weeks[n]?.studentSubmitted)
     .sort((a, b) => b - a);
   let streak = 0;
   for (const n of weekNums) {
-    if ((student.weeks[n].adherencePct ?? 0) >= 0.9) streak++;
+    if ((student.weeks[n]?.adherencePct ?? 0) >= 0.9) streak++;
     else break;
   }
   return streak;
@@ -3374,7 +3379,7 @@ const MONTH_NAMES_ES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "
 function ProgressChart({ student, activeWeekNum }) {
   const viewedWeekNum = activeWeekNum ?? student.currentWeek;
   const week = ensureWeekShape(student.weeks[viewedWeekNum] ?? student.weeks[student.currentWeek]);
-  const trainSlots = (week?.plan || []).map((d, i) => ({ d, i })).filter((x) => !!x.d.paceKey);
+  const trainSlots = (week?.plan || []).map((d, i) => ({ d, i })).filter((x) => !!x.d?.paceKey);
   const completedCount = trainSlots.filter((x) => week.log[x.i]?.completed).length;
   const totalCount = trainSlots.length;
   const dailyPct = totalCount > 0 ? completedCount / totalCount : 0;
@@ -3454,7 +3459,10 @@ function ProgressChart({ student, activeWeekNum }) {
   );
 }
 
-function LapCard({ day, index, mode, log, onChangeDay, onChangeLog, isToday, isRaceGoal, onStartLive, onSwapDay, onMoveSession }) {
+function LapCard({ day: dayRaw, index, mode, log, onChangeDay, onChangeLog, isToday, isRaceGoal, onStartLive, onSwapDay, onMoveSession }) {
+  // Un día puede faltar en planes guardados por versiones anteriores; se trata como descanso
+  // en vez de tumbar la pantalla completa del alumno.
+  const day = dayRaw || { day: DAYS[index] ?? "", type: "Descanso", paceKey: "", km: 0 };
   const zone = ZONE_BY_PACEKEY[day.paceKey] || "rest";
   const zoneColor = ZONE_COLOR[zone];
   const isRest = !day.paceKey;
@@ -6320,7 +6328,7 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
   const yesterdayDay = canEditWeek && currentWeekData && yesterdayIdx >= 0 ? currentWeekData.plan[yesterdayIdx] : null;
   const yesterdayLog = canEditWeek && currentWeekData && yesterdayIdx >= 0 ? currentWeekData.log[yesterdayIdx] : null;
   const needsYesterdayConfirm = !!(yesterdayDay?.paceKey && !yesterdayLog?.completed && !dismissedYesterdayReminder);
-  const submitSlots = currentWeekData ? currentWeekData.plan.map((d, i) => ({ d, i })).filter((x) => !!x.d.paceKey) : [];
+  const submitSlots = currentWeekData ? (currentWeekData.plan || []).map((d, i) => ({ d, i })).filter((x) => !!x.d?.paceKey) : [];
   const submitCompletedCount = currentWeekData ? submitSlots.filter((x) => currentWeekData.log[x.i]?.completed).length : 0;
   const submitTotalCount = submitSlots.length;
   // Ya no depende de la fecha: espera al coach solo cuando la última semana disponible ya
@@ -6453,7 +6461,7 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
                 <span className="text-sm font-semibold" style={{ color: COLORS.textPrimary }}>¡Semana enviada!</span>
               </div>
               {(() => {
-                const slots = currentWeekData.plan.map((d, i) => ({ d, i })).filter((x) => !!x.d.paceKey);
+                const slots = (currentWeekData.plan || []).map((d, i) => ({ d, i })).filter((x) => !!x.d?.paceKey);
                 const completed = slots.filter((x) => currentWeekData.log[x.i]?.completed);
                 const kmDone = r1(completed.reduce((sum, x) => {
                   const l = currentWeekData.log[x.i];
