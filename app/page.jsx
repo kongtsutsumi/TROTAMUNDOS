@@ -2001,7 +2001,7 @@ function buildWeekProposal(student) {
 }
 
 function finalizeWeekPlan(student, proposal, confirmed) {
-  const currentWeekData = student.weeks[student.currentWeek];
+  const currentWeekData = ensureWeekShape(student.weeks[student.currentWeek]);
   const nextWeekNum = student.currentWeek + 1;
 
   if (proposal.kind === "principiante") {
@@ -2292,8 +2292,9 @@ function Pill({ children, color }) {
 }
 // Arma el reporte semanal del alumno: cumplimiento, km, RPE, ritmo real vs objetivo, y
 // conclusiones/recomendaciones generadas con reglas simples según esos números.
-function buildWeeklyReportData(student, week, weekNum) {
-  const slots = week.plan.map((d, i) => ({ d, i })).filter((x) => !!x.d.paceKey);
+function buildWeeklyReportData(student, weekRaw, weekNum) {
+  const week = ensureWeekShape(weekRaw);
+  const slots = (week?.plan || []).map((d, i) => ({ d, i })).filter((x) => !!x.d.paceKey);
   const completedSlots = slots.filter((x) => week.log[x.i]?.completed);
   const daysPlanned = slots.length;
   const daysCompleted = completedSlots.length;
@@ -3372,8 +3373,8 @@ function aggregateKmHistory(history, groupBy) {
 const MONTH_NAMES_ES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
 function ProgressChart({ student, activeWeekNum }) {
   const viewedWeekNum = activeWeekNum ?? student.currentWeek;
-  const week = student.weeks[viewedWeekNum] ?? student.weeks[student.currentWeek];
-  const trainSlots = week.plan.map((d, i) => ({ d, i })).filter((x) => !!x.d.paceKey);
+  const week = ensureWeekShape(student.weeks[viewedWeekNum] ?? student.weeks[student.currentWeek]);
+  const trainSlots = (week?.plan || []).map((d, i) => ({ d, i })).filter((x) => !!x.d.paceKey);
   const completedCount = trainSlots.filter((x) => week.log[x.i]?.completed).length;
   const totalCount = trainSlots.length;
   const dailyPct = totalCount > 0 ? completedCount / totalCount : 0;
@@ -6304,7 +6305,7 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
   const activeWeekNum = student ? Math.min(Math.max(viewedWeek ?? activeLogWeek, activeLogWeek), furthestApprovedWeek) : null;
   const isViewingCurrent = !student || activeWeekNum === activeLogWeek;
   const week = student ? ensureWeekShape(student.weeks[activeWeekNum]) : null;
-  const currentWeekData = student ? student.weeks[activeLogWeek] : null;
+  const currentWeekData = student ? ensureWeekShape(student.weeks[activeLogWeek]) : null;
   // La semana que se está viendo es un "adelanto" si su lunes todavía no llegó: se puede
   // mirar, pero no marcar nada hasta que empiece de verdad.
   const todayWeekNum = student ? getTodayWeekNum(student) : null;

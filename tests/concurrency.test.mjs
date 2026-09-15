@@ -160,6 +160,24 @@ console.log("▸ Semanas sin registro no rompen la pantalla");
   const completa = { plan, log: [{ completed: true }, { completed: false }, { completed: false }] };
   check("Una semana correcta no se altera", ensureWeekShape(completa) === completa);
   check("Sin semana no falla", ensureWeekShape(null) === null);
+
+  // Casos que llegaron a romper la pantalla en producción.
+  const rotos = [
+    ["log como null", { plan, log: null }],
+    ["log vacío", { plan, log: [] }],
+    ["sin plan ni log", {}],
+  ];
+  for (const [nombre, week] of rotos) {
+    const fixed = ensureWeekShape(week);
+    const planLen = (fixed?.plan || []).length;
+    let crashed = false;
+    try {
+      // Simula lo que hacen las pantallas al recorrer los días.
+      (fixed.plan || []).map((d, i) => fixed.log[i]?.completed);
+    } catch (e) { crashed = true; }
+    check(`No rompe con ${nombre}`, !crashed);
+    check(`El registro queda alineado con ${nombre}`, (fixed.log?.length ?? 0) === planLen);
+  }
 }
 
 console.log("\n" + "─".repeat(52));
