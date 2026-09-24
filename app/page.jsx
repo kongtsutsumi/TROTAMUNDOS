@@ -6318,8 +6318,12 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
   // mirar, pero no marcar nada hasta que empiece de verdad.
   const todayWeekNum = student ? getTodayWeekNum(student) : null;
   const isPreviewWeek = !!(student && activeWeekNum > todayWeekNum);
-  // Una semana ya cerrada/enviada tampoco se edita: queda como registro terminado.
-  const isClosedWeek = !!week?.submitted;
+  // Una semana queda como registro terminado en dos casos: cuando el propio alumno la envió,
+  // o cuando su semana de calendario ya pasó. Que el coach haya dejado lista la siguiente NO
+  // la cierra: mientras el alumno siga dentro de esa semana, debe poder registrar lo que le
+  // falte — antes esto le bloqueaba las sesiones pendientes apenas el coach generaba la
+  // semana siguiente.
+  const isClosedWeek = !!(week?.studentSubmitted || (activeWeekNum != null && todayWeekNum != null && activeWeekNum < todayWeekNum));
   const canEditWeek = !!(student && isViewingCurrent && !isPreviewWeek && !isClosedWeek);
   const todayDowIndex = (new Date().getDay() + 6) % 7; // 0=Lunes ... 6=Domingo
   const [dismissedYesterdayReminder, setDismissedYesterdayReminder] = useState(false);

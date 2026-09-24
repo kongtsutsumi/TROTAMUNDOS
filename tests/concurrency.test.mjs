@@ -180,6 +180,26 @@ console.log("▸ Semanas sin registro no rompen la pantalla");
   }
 }
 
+
+console.log("▸ Cuándo una semana queda bloqueada para el alumno");
+{
+  // Que el coach deje lista la semana siguiente NO debe cerrarle la semana en curso al
+  // alumno: mientras siga dentro de esas fechas, tiene que poder registrar lo que le falte.
+  const isClosed = (week, activeWeekNum, todayWeekNum) =>
+    !!(week?.studentSubmitted || (activeWeekNum != null && todayWeekNum != null && activeWeekNum < todayWeekNum));
+
+  check("El coach cerró la semana pero el alumno sigue en ella: puede registrar",
+    !isClosed({ submitted: true, studentSubmitted: false }, 3, 3));
+  check("El alumno envió su semana: queda bloqueada",
+    isClosed({ submitted: true, studentSubmitted: true }, 3, 3));
+  check("Una semana de calendario ya pasada: queda bloqueada",
+    isClosed({ submitted: true, studentSubmitted: false }, 3, 4));
+  check("Semana en curso sin cerrar: puede registrar",
+    !isClosed({ submitted: false, studentSubmitted: false }, 3, 3));
+  check("Semana futura: no se bloquea por esta regla (lo hace la de adelanto)",
+    !isClosed({ submitted: false, studentSubmitted: false }, 4, 3));
+}
+
 console.log("\n" + "─".repeat(52));
 if (failed === 0) {
   console.log(`✓ ${passed} verificaciones, todas correctas.`);
