@@ -879,6 +879,59 @@ function pickRepScheme(pool, distances, minReps, maxReps, recoveryKmFn) {
   return best;
 }
 
+// --- Bloques de Run/Walk de los planes de carrera (10K / 21K / 42K) ---
+// El trote de cada bloque va de 10' a 20', de minuto en minuto (11', 12', 13'... 19', 20'),
+// con 1' de caminata entre bloques. Se reparte la sesión primero en 3 bloques; si con 3 el
+// trote se pasaría de 20', se prueba con 4. Solo cuando ni con 4 bloques alcanza (sesiones
+// muy largas) se suman más bloques, pero nunca se supera el techo de 20'. Las sesiones muy
+// cortas usan menos bloques, porque bajar de 10' de trote deja de tener sentido como
+// estímulo: antes el sistema saltaba de 12' a 15' y de ahí a 18' o 20', sin los valores
+// intermedios y sin una preferencia clara por 3 bloques.
+const RUNWALK_BLOCK_MIN_MINUTES = 10;
+const RUNWALK_BLOCK_MAX_MINUTES = 20;
+const RUNWALK_WALK_MINUTES = 1;
+// Orden en que se prueban las cantidades de bloques: 3 primero, 4 después, y recién luego
+// el resto (2 antes que 1, para que una sesión corta conserve al menos una caminata).
+const RUNWALK_REPS_PREFERENCE = [3, 4, 2, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 1];
+
+function computeRunWalkBlocks(totalMin, maxBlockMin) {
+  const walk = RUNWALK_WALK_MINUTES;
+  const maxBlock = Math.max(RUNWALK_BLOCK_MIN_MINUTES, maxBlockMin || RUNWALK_BLOCK_MAX_MINUTES);
+  const total = Math.max(0, Math.round(totalMin || 0));
+  let fits = null;      // primer reparto válido en orden de preferencia y bien ajustado
+  let loose = null;      // reparto válido pero con más desvío, por si ninguno ajusta
+  let closest = null;    // red de seguridad: lo más cercano aunque haya que recortar
+  for (const reps of RUNWALK_REPS_PREFERENCE) {
+    // Trote por bloque que repartiría la sesión completa con esta cantidad de bloques.
+    const exact = (total - reps * walk) / reps;
+    const blockMin = Math.min(maxBlock, Math.max(RUNWALK_BLOCK_MIN_MINUTES, Math.round(exact)));
+    const accumulatedMin = reps * (blockMin + walk);
+    const cand = { reps, blockMin, walkMin: walk, accumulatedMin, diff: Math.abs(accumulatedMin - total) };
+    // "Cabe" si el reparto cae dentro de la franja permitida (con medio minuto de tolerancia
+    // para poder redondear), no si hubo que recortarlo contra el mínimo o el máximo.
+    const inRange = exact >= RUNWALK_BLOCK_MIN_MINUTES - 0.5 && exact <= maxBlock + 0.5;
+    // Entre los repartos válidos se toma el primero en orden de preferencia que además quede
+    // a 2' o menos del total real. En 3 y 4 bloques el redondeo nunca pasa de ahí, así que la
+    // preferencia por 3 (y luego 4) se respeta siempre; el criterio solo entra en juego en
+    // sesiones muy largas, donde repartir en muchos bloques acumula error de redondeo.
+    if (inRange && cand.diff <= 2 && !fits) fits = cand;
+    if (inRange && (!loose || cand.diff < loose.diff)) loose = cand;
+    if (!closest || cand.diff < closest.diff) closest = cand;
+  }
+  return fits || loose || closest || { reps: 1, blockMin: RUNWALK_BLOCK_MIN_MINUTES, walkMin: walk, accumulatedMin: RUNWALK_BLOCK_MIN_MINUTES + walk, diff: 0 };
+}
+
+// Minutos estimados de una sesión de Run/Walk a partir de su kilometraje y su ritmo.
+function getRunWalkTotalMin(day) {
+  return day.targetPace ? Math.round((day.km || 0) * day.targetPace) : Math.round((day.km || 0) * 7);
+}
+
+// Estructura de bloques de un día concreto. El lunes de recuperación mantiene su criterio
+// propio: bloques más cortos (techo de 15'), que es lo que corresponde a un día de descarga.
+function getRunWalkPlan(day) {
+  return computeRunWalkBlocks(getRunWalkTotalMin(day), day.isMondayRecovery ? 15 : RUNWALK_BLOCK_MAX_MINUTES);
+}
+
 // Calcula el mismo ritmo "representativo" que se muestra en el detalle de la sesión
 // (usa la distancia/duración real de esa sesión, no un valor genérico de referencia).
 // Arma la estructura de fases de una sesión para el modo "entrenamiento en vivo":
@@ -912,18 +965,10 @@ function buildLiveSegments(day, easyP) {
   // Run/Walk de los planes de carrera (10K/21K/42K, no principiante/fitness): bloques de trote
   // + caminata según la duración total de la sesión, más los strides finales como fases propias.
   if (day.paceKey === "E" && day.runWalk) {
-    const totalMin = day.targetPace ? Math.round((day.km || 0) * day.targetPace) : Math.round((day.km || 0) * 7);
-    let blockMin = 12;
-    if (totalMin > 75) blockMin = 20;
-    else if (totalMin > 60) blockMin = 18;
-    else if (totalMin > 50) blockMin = 15;
-    else if (totalMin > 40) blockMin = 14;
-    else if (totalMin > 30) blockMin = 13;
-    let reps = Math.max(2, Math.round(totalMin / (blockMin + 1)));
-    if (day.isMondayRecovery) { blockMin = Math.min(blockMin, 15); reps = Math.min(reps, 3); }
+    const { reps, blockMin, walkMin } = getRunWalkPlan(day);
     for (let r = 1; r <= reps; r++) {
       segs.push({ label: `Trote ${r} de ${reps}`, type: "time", target: blockMin, pace: day.easyPace });
-      segs.push({ label: "Caminata", type: "time", target: 1, pace: null });
+      segs.push({ label: "Caminata", type: "time", target: walkMin, pace: null });
     }
     for (let s = 1; s <= 3; s++) {
       segs.push({ label: `Stride ${s} de 3`, type: "time", target: 20 / 60, pace: null });
@@ -1104,17 +1149,9 @@ function getSessionDetail(day) {
       ];
     }
     if (day.runWalk) {
-      const totalMin = day.targetPace ? Math.round(km * day.targetPace) : Math.round(km * 7);
-      let blockMin = 12;
-      if (totalMin > 75) blockMin = 20;
-      else if (totalMin > 60) blockMin = 18;
-      else if (totalMin > 50) blockMin = 15;
-      else if (totalMin > 40) blockMin = 14;
-      else if (totalMin > 30) blockMin = 13;
-      let reps = Math.max(2, Math.round(totalMin / (blockMin + 1)));
-      if (day.isMondayRecovery) { blockMin = Math.min(blockMin, 15); reps = Math.min(reps, 3); }
+      const { reps, blockMin, walkMin, accumulatedMin } = getRunWalkPlan(day);
       return [
-        { label: "Run/Walk", text: `Trote ${blockMin}' + caminata 1', x${reps} (acumulado ~${reps * (blockMin + 1)} min)${easyStr}.`, color: COLORS.moderate },
+        { label: "Run/Walk", text: `Trote ${blockMin}' + caminata ${walkMin}', x${reps} (acumulado ~${accumulatedMin} min)${easyStr}.`, color: COLORS.moderate },
         { label: "Strides", text: `3 strides de 20" rápidos + 1' caminando entre cada uno.`, color: COLORS.hard },
       ];
     }
@@ -1421,15 +1458,11 @@ function getSessionBars(day) {
       return bars;
     }
     if (day.runWalk) {
-      const totalMin = day.targetPace ? Math.round(km * day.targetPace) : Math.round(km * 7);
-      let blockMin = 12;
-      if (totalMin > 75) blockMin = 20; else if (totalMin > 60) blockMin = 18; else if (totalMin > 50) blockMin = 15;
-      else if (totalMin > 40) blockMin = 14; else if (totalMin > 30) blockMin = 13;
-      const reps = Math.max(2, Math.round(totalMin / (blockMin + 1)));
+      const { reps, blockMin, walkMin } = getRunWalkPlan(day);
       const bars = [];
       for (let i = 0; i < reps; i++) {
         bars.push({ durationMin: blockMin, pace: day.targetPace || easyP, colorKind: "moderate", label: "Trote" });
-        bars.push({ durationMin: 1, pace: WALK_PACE, colorKind: "recovery", label: "Camina" });
+        bars.push({ durationMin: walkMin, pace: WALK_PACE, colorKind: "recovery", label: "Camina" });
       }
       bars.push({ durationMin: 1, pace: STRIDE_PACE, colorKind: "hard", label: "Strides" });
       return bars;

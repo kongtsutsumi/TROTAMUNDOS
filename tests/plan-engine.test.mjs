@@ -647,6 +647,121 @@ console.log("▸ Cambiar de objetivo tras una inactividad");
 }
 
 // ============================================================
+// 18. BLOQUES DE RUN/WALK  (10' a 20', de minuto en minuto, 3 bloques de preferencia)
+// ============================================================
+console.log("\n▸ Bloques de Run/Walk según el kilometraje");
+{
+  const MIN = E.RUNWALK_BLOCK_MIN_MINUTES;
+  const MAX = E.RUNWALK_BLOCK_MAX_MINUTES;
+  check("La franja declarada es de 10' a 20'", MIN === 10 && MAX === 20, `dio ${MIN}-${MAX}`);
+  check("La caminata entre bloques es de 1'", E.RUNWALK_WALK_MINUTES === 1);
+
+  // Barrido sobre todo el rango de duraciones que la app puede producir (y más allá).
+  let fueraDeFranja = 0, noEntero = 0, desvioGrande = 0, peorDesvio = 0;
+  for (let total = 11; total <= 180; total++) {
+    const b = E.computeRunWalkBlocks(total, MAX);
+    if (b.blockMin < MIN || b.blockMin > MAX) fueraDeFranja++;
+    if (!Number.isInteger(b.blockMin) || !Number.isInteger(b.reps)) noEntero++;
+    const desvio = Math.abs(b.accumulatedMin - total);
+    peorDesvio = Math.max(peorDesvio, desvio);
+    if (desvio > 2) desvioGrande++;
+  }
+  check("Ningún bloque queda fuera de la franja 10'-20'", fueraDeFranja === 0, `${fueraDeFranja} casos`);
+  check("Los bloques y las repeticiones siempre son minutos enteros", noEntero === 0, `${noEntero} casos`);
+  check("El acumulado nunca se desvía más de 2' del total de la sesión", desvioGrande === 0,
+    `${desvioGrande} casos, peor desvío ${peorDesvio}'`);
+
+  // Se usan todos los valores intermedios, no solo 12/15/18/20 como antes.
+  const usados = new Set();
+  for (let total = 11; total <= 180; total++) usados.add(E.computeRunWalkBlocks(total, MAX).blockMin);
+  const intermedios = [11, 13, 14, 16, 17, 19].filter((v) => usados.has(v));
+  check("Aparecen los valores intermedios de 1 en 1 (11', 13', 14', 16', 17', 19')",
+    intermedios.length >= 5, `solo ${intermedios.join(", ")}`);
+
+  // Prioridad: 3 bloques primero, 4 después, más solo cuando no cabe de otra forma.
+  check("Una sesión de 48' se reparte en 3 bloques", E.computeRunWalkBlocks(48, MAX).reps === 3);
+  check("Una sesión de 63' se reparte en 3 bloques de 20'",
+    E.computeRunWalkBlocks(63, MAX).reps === 3 && E.computeRunWalkBlocks(63, MAX).blockMin === 20);
+  check("Una sesión de 70' pasa a 4 bloques (con 3 se pasaría de 20')",
+    E.computeRunWalkBlocks(70, MAX).reps === 4);
+  check("Una sesión de 84' son 4 bloques de 20' exactos",
+    E.computeRunWalkBlocks(84, MAX).reps === 4 && E.computeRunWalkBlocks(84, MAX).blockMin === 20);
+  check("Solo por encima de 4 x 20' se agregan más bloques",
+    E.computeRunWalkBlocks(100, MAX).reps === 5 && E.computeRunWalkBlocks(100, MAX).blockMin <= MAX);
+  check("Una sesión corta usa menos bloques antes que bajar de 10'",
+    E.computeRunWalkBlocks(25, MAX).reps === 2 && E.computeRunWalkBlocks(25, MAX).blockMin >= MIN);
+
+  // Se prefieren 3 bloques en toda la franja en la que 3 bloques son posibles.
+  let noPrefiere3 = 0;
+  for (let total = 33; total <= 63; total++) if (E.computeRunWalkBlocks(total, MAX).reps !== 3) noPrefiere3++;
+  check("Entre 33' y 63' siempre elige 3 bloques", noPrefiere3 === 0, `${noPrefiere3} casos`);
+  let noPrefiere4 = 0;
+  for (let total = 66; total <= 84; total++) if (E.computeRunWalkBlocks(total, MAX).reps !== 4) noPrefiere4++;
+  check("Entre 66' y 84' siempre elige 4 bloques", noPrefiere4 === 0, `${noPrefiere4} casos`);
+
+  // El lunes de descarga mantiene su techo más bajo.
+  let lunesFuera = 0;
+  for (let total = 11; total <= 60; total++) if (E.computeRunWalkBlocks(total, 15).blockMin > 15) lunesFuera++;
+  check("El lunes de recuperación no pasa de 15' por bloque", lunesFuera === 0, `${lunesFuera} casos`);
+  check("El lunes de 48' son 3 bloques de 15'",
+    E.computeRunWalkBlocks(48, 15).reps === 3 && E.computeRunWalkBlocks(48, 15).blockMin === 15);
+
+  // Las tres vistas (detalle, gráfico y entrenamiento en vivo) deben coincidir: todas pasan
+  // por la misma función, así que basta comprobar que el detalle y el modo en vivo cuadran.
+  const paces = E.computeTrainingPaces(E.computeVDOT(10, E.parsePaceToDecimal("4:10")));
+  for (const km of [4, 6, 8, 10, 12, 14, 16]) {
+    const day = {
+      day: "Lunes", type: "Run/Walk", paceKey: "E", km, runWalk: true,
+      targetPace: paces.E, easyPace: paces.E, level: "intermedio2",
+    };
+    const plan = E.getRunWalkPlan(day);
+    const segs = E.buildLiveSegments(day, paces.E);
+    const trotes = segs.filter((s) => s.label.startsWith("Trote"));
+    check(`Detalle y modo en vivo coinciden en ${km} km`,
+      trotes.length === plan.reps && trotes.every((t) => t.target === plan.blockMin),
+      `detalle ${plan.reps}x${plan.blockMin}' vs vivo ${trotes.length}x${trotes[0]?.target}'`);
+    const detalle = E.getSessionDetail(day);
+    const texto = (detalle || []).find((d) => d.label === "Run/Walk")?.text || "";
+    check(`El texto del detalle muestra los bloques correctos en ${km} km`,
+      texto.includes(`Trote ${plan.blockMin}'`) && texto.includes(`x${plan.reps}`),
+      `texto: ${texto}`);
+    const bars = E.getSessionBars ? E.getSessionBars(day) : null;
+    if (bars) {
+      const trote = bars.filter((b) => b.label === "Trote");
+      check(`El gráfico de la sesión coincide en ${km} km`,
+        trote.length === plan.reps && trote.every((b) => b.durationMin === plan.blockMin),
+        `gráfico ${trote.length}x${trote[0]?.durationMin}' vs ${plan.reps}x${plan.blockMin}'`);
+    }
+  }
+
+  // Lo mismo, sobre planes generados de verdad: ningún día de Run/Walk fuera de la franja.
+  let diasFuera = 0, diasRevisados = 0;
+  for (const goalId of ["10k", "21k", "42k"]) {
+    for (const [level, kms] of Object.entries({
+      principiante: [20, 30, 40], intermedio1: [30, 40, 50], intermedio2: [40, 50, 60],
+      intermedio3: [50, 60, 70], avanzado1: [70, 85, 100], avanzado2: [90, 110, 130],
+    })) {
+      for (const weeklyKm of kms) {
+        for (const phase of ["base", "build", "peak", "taper"]) {
+          const qp = E.suggestQualityPaces(phase, goalId, level, 10);
+          const plan = E.buildRacePlan(goalId, phase, level, weeklyKm, Math.round(weeklyKm * 0.28), qp.q1, qp.q2, paces, 10, 3);
+          for (const d of plan || []) {
+            if (d.paceKey !== "E" || !d.runWalk || !(d.km > 0)) continue;
+            diasRevisados++;
+            const b = E.getRunWalkPlan(d);
+            const techo = d.isMondayRecovery ? 15 : MAX;
+            if (b.blockMin < MIN || b.blockMin > techo || b.reps < 1) diasFuera++;
+          }
+        }
+      }
+    }
+  }
+  check("Hay días de Run/Walk que revisar en los planes reales", diasRevisados > 300, `revisados ${diasRevisados}`);
+  check("Ningún día de Run/Walk de un plan real queda fuera de la franja", diasFuera === 0,
+    `${diasFuera} de ${diasRevisados} días`);
+}
+
+// ============================================================
 // RESULTADO
 // ============================================================
 console.log("\n" + "─".repeat(52));

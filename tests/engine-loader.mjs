@@ -17,6 +17,8 @@ const WANTED = [
   "DAYS", "DISTANCE_KM", "GOALS", "GOAL_LABEL", "LEVEL_LABEL", "LEVELS", "PHASE_LABEL",
   "BEGINNER_STAGES", "FITNESS16_STAGES", "BEGINNER_TRAIN_DAYS", "FITNESS_GOAL_TRAIN_DAYS",
   "BEGINNER_WARMUP_MIN", "T_DURATIONS", "R_RECOVERY_MIN",
+  "RUNWALK_BLOCK_MIN_MINUTES", "RUNWALK_BLOCK_MAX_MINUTES", "RUNWALK_WALK_MINUTES",
+  "RUNWALK_REPS_PREFERENCE", "computeRunWalkBlocks", "getRunWalkTotalMin", "getRunWalkPlan", "getSessionBars",
   "I_DIST_BY_PHASE", "R_DIST_BY_PHASE", "AVANZADO_QUALITY_TABLE", "ANOMALY_MAX_KM", "ANOMALY_MAX_LONG_KM",
   "r1", "rWhole", "isFitnessGoal", "getStageTable", "getRunWalkTrainDays",
   "computeVDOT", "computeTrainingPaces", "parsePaceToDecimal", "formatPace", "anchorPacesToGoal",
