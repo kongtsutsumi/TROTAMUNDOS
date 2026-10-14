@@ -200,6 +200,153 @@ console.log("▸ Cuándo una semana queda bloqueada para el alumno");
     !isClosed({ submitted: false, studentSubmitted: false }, 4, 3));
 }
 
+// ============================================================
+// PUBLICACIÓN AUTOMÁTICA EN EL SERVIDOR
+// Se replica el flujo de /api/data (op "get") con una base simulada, para comprobar que la
+// semana se crea en el mismo pedido con que el alumno la consulta, que no se duplica, y que
+// la lectura del coach no la dispara.
+// ============================================================
+console.log("\n▸ Publicación automática al leer el registro del alumno");
+{
+  const E = await import("../lib/plan-engine.mjs");
+  const iso = E.localDateISO;
+  const lunesHoy = E.mondayOf(new Date());
+  const inicioHace = (n) => { const d = new Date(lunesHoy); d.setDate(d.getDate() - 7 * n); return iso(d); };
+  const paces = { E: 6.2, M: 5.0, HM: 4.8, T: 4.7, I: 4.3, R: 4.0 };
+  const semana = () => ({
+    weeklyKm: 45, phase: "base",
+    plan: E.buildRacePlan("21k", "base", "intermedio2", 45, 14, "I", "T", paces, 10, 1),
+    log: E.emptyLog().map((l) => ({ ...l, completed: true })), submitted: true, studentSubmitted: true,
+  });
+
+  // Base de datos simulada, con contador de escrituras.
+  function makeKv(seed) {
+    const store = new Map(Object.entries(seed));
+    let writes = 0, failNext = false;
+    return {
+      get: async (k) => (store.has(k) ? JSON.parse(JSON.stringify(store.get(k))) : null),
+      set: async (k, v) => { if (failNext) { failNext = false; return false; } writes++; store.set(k, JSON.parse(JSON.stringify(v))); return true; },
+      breakNextWrite: () => { failNext = true; },
+      writeCount: () => writes,
+      raw: store,
+    };
+  }
+
+  // Réplica del flujo del servidor: publicar y guardar (lib/autoPublish.js).
+  async function publishDueWeekFor(kv, studentId, record, localDate) {
+    const student = record ?? (await kv.get(`student:${studentId}`));
+    if (!student) return { student: null, published: null };
+    const result = E.autoPublishDueWeek(student, localDate || iso(new Date()));
+    if (!result.published) return { student, published: null, reason: result.reason };
+    const saved = await kv.set(`student:${studentId}`, result.updated);
+    if (!saved) return { student, published: null, reason: "no-se-pudo-guardar" };
+    if (result.closedWeekNumber != null) {
+      const reports = (await kv.get("reports")) || [];
+      const already = reports.some((r) => r?.studentId === student.id && r?.weekNumber === result.closedWeekNumber);
+      if (!already) {
+        reports.push({ id: `auto-${student.id}-${result.closedWeekNumber}`, studentId: student.id, weekNumber: result.closedWeekNumber, autoPublished: true });
+        await kv.set("reports", reports);
+      }
+    }
+    const roster = (await kv.get("roster")) || [];
+    if (roster.some((r) => r?.id === studentId)) {
+      await kv.set("roster", roster.map((r) => (r.id === studentId ? { ...r, weekNumber: result.published, waitingApproval: false } : r)));
+    }
+    return { student: result.updated, published: result.published, kind: result.kind };
+  }
+
+  // Réplica del "get" del servidor: solo el alumno dispara la publicación.
+  async function serverGet(kv, session, key, localDate) {
+    let raw = await kv.get(key);
+    if (session.role === "student" && key === `student:${session.studentId}` && raw) {
+      const r = await publishDueWeekFor(kv, session.studentId, raw, E.sanitizeLocalDate(localDate));
+      if (r.student) raw = r.student;
+    }
+    return raw;
+  }
+
+  const alumnoSemilla = () => ({
+    id: "s1", name: "Alumno", goal: "21k", level: "intermedio2", paces,
+    peakKm: 60, peakLongKm: 18, weeksToRace: 10,
+    planStartMonday: inicioHace(3), currentWeek: 3,
+    weeks: { 1: semana(), 2: semana(), 3: semana() },
+  });
+  const semilla = () => ({ "student:s1": alumnoSemilla(), roster: [{ id: "s1", name: "Alumno", weekNumber: 3 }], reports: [] });
+  const hoy = iso(new Date());
+
+  // 1. El alumno pide su registro y recibe la semana ya publicada.
+  {
+    const kv = makeKv(semilla());
+    const antes = await kv.get("student:s1");
+    check("Antes de leer, al alumno le falta la semana de hoy", !antes.weeks[4]);
+    const got = await serverGet(kv, { role: "student", studentId: "s1" }, "student:s1", hoy);
+    check("El alumno recibe su semana en el MISMO pedido", !!got.weeks[4], "no vino la semana 4");
+    check("La semana que recibe viene marcada como automática", !!got.weeks[4]?.autoPublished);
+    check("La semana que recibe tiene sesiones reales", (got.weeks[4]?.plan || []).filter((d) => d?.paceKey).length >= 3);
+    check("Queda guardada en la base, no solo en la respuesta", !!(await kv.get("student:s1")).weeks[4]);
+    check("El listado del coach queda en la semana nueva", (await kv.get("roster"))[0].weekNumber === 4);
+    check("Se registra el reporte de la semana cerrada", (await kv.get("reports")).length === 1);
+    check("El reporte queda marcado como automático", (await kv.get("reports"))[0].autoPublished === true);
+  }
+
+  // 2. Lecturas repetidas: no se publica dos veces ni se duplica el reporte.
+  {
+    const kv = makeKv(semilla());
+    const sess = { role: "student", studentId: "s1" };
+    await serverGet(kv, sess, "student:s1", hoy);
+    const escriturasTras1 = kv.writeCount();
+    await serverGet(kv, sess, "student:s1", hoy);
+    await serverGet(kv, sess, "student:s1", hoy);
+    check("Leer tres veces no publica tres semanas", Object.keys((await kv.get("student:s1")).weeks).length === 4);
+    check("Leer tres veces no vuelve a escribir", kv.writeCount() === escriturasTras1, `${kv.writeCount()} vs ${escriturasTras1}`);
+    check("El reporte no se duplica", (await kv.get("reports")).length === 1);
+  }
+
+  // 3. Dos pedidos a la vez (dos dispositivos del alumno).
+  {
+    const kv = makeKv(semilla());
+    const sess = { role: "student", studentId: "s1" };
+    const [a, b] = await Promise.all([
+      serverGet(kv, sess, "student:s1", hoy),
+      serverGet(kv, sess, "student:s1", hoy),
+    ]);
+    const guardado = await kv.get("student:s1");
+    check("Dos pedidos simultáneos dejan UNA sola semana nueva", Object.keys(guardado.weeks).length === 4, `quedaron ${Object.keys(guardado.weeks).length}`);
+    check("Los dos dispositivos reciben la semana", !!a.weeks[4] && !!b.weeks[4]);
+    check("Los dos reciben el MISMO plan", JSON.stringify(a.weeks[4].plan) === JSON.stringify(b.weeks[4].plan));
+    check("No se duplica el reporte con pedidos simultáneos", (await kv.get("reports")).length === 1);
+  }
+
+  // 4. La lectura del coach no publica: su fecha no es la del alumno, y puede estar por
+  //    armar la semana él mismo.
+  {
+    const kv = makeKv(semilla());
+    const got = await serverGet(kv, { role: "coach" }, "student:s1", hoy);
+    check("La lectura del coach no publica la semana", !got.weeks[4]);
+    check("La lectura del coach no escribe nada", kv.writeCount() === 0);
+  }
+
+  // 5. Si la base no pudo guardar, el alumno ve su semana anterior — nunca una semana
+  //    fantasma que en realidad no quedó registrada.
+  {
+    const kv = makeKv(semilla());
+    kv.breakNextWrite();
+    const got = await serverGet(kv, { role: "student", studentId: "s1" }, "student:s1", hoy);
+    check("Si falla el guardado, no se devuelve una semana fantasma", !got.weeks[4]);
+    check("Si falla el guardado, el alumno conserva su registro anterior", !!got.weeks[3]);
+    check("Si falla el guardado, no se registra reporte", (await kv.get("reports")).length === 0);
+  }
+
+  // 6. Una fecha falsificada no destraba semanas futuras.
+  {
+    const kv = makeKv(semilla());
+    const futuro = iso(new Date(Date.now() + 40 * 86400000));
+    const got = await serverGet(kv, { role: "student", studentId: "s1" }, "student:s1", futuro);
+    const semanas = Object.keys(got.weeks).map(Number);
+    check("Una fecha muy futura no adelanta el plan", Math.max(...semanas) <= 4, `llegó a la semana ${Math.max(...semanas)}`);
+  }
+}
+
 console.log("\n" + "─".repeat(52));
 if (failed === 0) {
   console.log(`✓ ${passed} verificaciones, todas correctas.`);

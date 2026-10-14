@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { kvGet, kvSet, kvDelete } from "../../../lib/supabaseAdmin";
 import { verifySessionToken, SESSION_COOKIE } from "../../../lib/session";
 import { canRead, canWrite, canDelete, sanitizeForSession } from "../../../lib/permissions";
+import { publishDueWeekFor, sanitizeLocalDate } from "../../../lib/autoPublish";
 
 async function getSession() {
   const store = await cookies();
@@ -30,7 +31,7 @@ export async function POST(request) {
 
   let body;
   try { body = await request.json(); } catch (e) { return NextResponse.json({ error: "Petición inválida" }, { status: 400 }); }
-  const { op, key, value } = body || {};
+  const { op, key, value, localDate } = body || {};
   // Las operaciones que actúan sobre el listado completo (rosterSummary, updateRosterEntry)
   // no llevan "key" — solo se exige para las que leen o escriben un registro concreto.
   const needsKey = op === "get" || op === "set" || op === "delete";
@@ -38,7 +39,25 @@ export async function POST(request) {
 
   if (op === "get") {
     if (!canRead(session, key)) return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
-    const raw = await kvGet(key);
+    let raw = await kvGet(key);
+
+    // GARANTÍA DE QUE NUNCA FALTE EL PLAN:
+    // cuando un alumno pide su propio registro, antes de responder se comprueba si le
+    // corresponde una semana que el coach no llegó a confirmar. Si es así, se publica acá
+    // mismo — en el mismo pedido — así que es imposible que entre un lunes y no la vea.
+    // No se hace en la lectura del coach a propósito: su fecha no es la del alumno, y
+    // abrir la ficha de un alumno no debería crearle semanas justo cuando el coach quizás
+    // está por armarla él. Para eso está la tarea del lunes.
+    if (session.role === "student" && key === `student:${session.studentId}` && raw) {
+      try {
+        const r = await publishDueWeekFor(session.studentId, raw, sanitizeLocalDate(localDate));
+        if (r.student) raw = r.student;
+      } catch (e) {
+        // Si la publicación automática falla, el alumno ve lo que ya tenía guardado.
+        console.error("autoPublish falló", e);
+      }
+    }
+
     return NextResponse.json({ value: sanitizeForSession(session, key, raw) });
   }
 
@@ -141,6 +160,9 @@ export async function POST(request) {
       }
       summary[r.id] = {
         completed, total,
+        // Para avisar en el listado cuáles semanas se publicaron solas y el coach todavía
+        // no revisó, sin tener que entrar a cada alumno.
+        autoPublished: !!week?.autoPublished,
         compliance: sTotal ? {
           weeks: closed.length, sessionsDone: sDone, sessionsTotal: sTotal,
           sessionsPct: sDone / sTotal,

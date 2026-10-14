@@ -5,9 +5,11 @@
 // absurdamente largas, con los volúmenes cuadrando, y respetando el km pico del alumno.
 //
 // Cómo correrlas:  npm test
-import { loadEngine } from "./engine-loader.mjs";
+//
+// Importan el motor real (lib/plan-engine.mjs). Antes había que extraer las funciones de
+// app/page.jsx con un truco, porque vivían dentro del archivo de pantallas; ya no.
+import * as E from "../lib/plan-engine.mjs";
 
-const E = loadEngine();
 let passed = 0, failed = 0;
 const failures = [];
 
@@ -759,6 +761,168 @@ console.log("\n▸ Bloques de Run/Walk según el kilometraje");
   check("Hay días de Run/Walk que revisar en los planes reales", diasRevisados > 300, `revisados ${diasRevisados}`);
   check("Ningún día de Run/Walk de un plan real queda fuera de la franja", diasFuera === 0,
     `${diasFuera} de ${diasRevisados} días`);
+}
+
+// ============================================================
+// 19. PUBLICACIÓN AUTOMÁTICA DE LA SEMANA
+//     El requisito es duro: NUNCA puede pasar que un alumno entre un lunes y no tenga plan.
+// ============================================================
+console.log("\n▸ Publicación automática de la semana");
+{
+  const iso = E.localDateISO;
+  const lunesHoy = E.mondayOf(new Date());
+  const inicioHace = (n) => { const d = new Date(lunesHoy); d.setDate(d.getDate() - 7 * n); return iso(d); };
+  const paces = { E: 6.2, M: 5.0, HM: 4.8, T: 4.7, I: 4.3, R: 4.0 };
+  const semana = (submitted, km = 45, extra = {}) => ({
+    weeklyKm: km, phase: "base",
+    plan: E.buildRacePlan("21k", "base", "intermedio2", km, 14, "I", "T", paces, 10, 1),
+    log: E.emptyLog().map((l) => ({ ...l, completed: submitted })),
+    submitted, studentSubmitted: submitted, ...extra,
+  });
+  const base = (ov = {}) => ({
+    id: "t1", name: "Alumno", goal: "21k", level: "intermedio2", paces,
+    peakKm: 60, peakLongKm: 18, weeksToRace: 10,
+    planStartMonday: inicioHace(3), currentWeek: 3,
+    weeks: { 1: semana(true), 2: semana(true), 3: semana(true) }, ...ov,
+  });
+
+  // --- La fecha local no se puede calcular con toISOString ---
+  const d = new Date(2026, 9, 12, 0, 30); // 12 de octubre, 00:30 hora local
+  check("localDateISO respeta el calendario local (no corre el día)", E.localDateISO(d) === "2026-10-12", `dio ${E.localDateISO(d)}`);
+
+  // --- Caso central: el coach no confirmó y llegó el lunes ---
+  const r = E.autoPublishDueWeek(base());
+  check("Publica la semana que falta cuando el coach no la confirmó", r.published === 4, `publicó ${r.published}`);
+  check("La semana publicada es la sugerencia del sistema", r.kind === "propuesta", `fue ${r.kind}`);
+  const nueva = r.updated.weeks[4];
+  check("La semana publicada queda abierta para el alumno", nueva && nueva.submitted === false);
+  check("La semana publicada queda marcada para revisión", !!nueva?.autoPublished);
+  check("La semana publicada tiene plan con sesiones reales", (nueva?.plan || []).filter((x) => x?.paceKey).length >= 3);
+  check("La semana publicada tiene registro vacío del mismo largo", Array.isArray(nueva?.log) && nueva.log.length === nueva.plan.length);
+  check("La nota explica que se publicó automáticamente", (nueva?.note || "").startsWith(E.AUTO_PUBLISH_LABEL));
+  check("La semana anterior queda cerrada", r.updated.weeks[3].submitted === true);
+  check("currentWeek avanza a la semana publicada", r.updated.currentWeek === 4);
+  check("El volumen publicado no supera el km pico", nueva.weeklyKm <= 60, `dio ${nueva.weeklyKm}`);
+  check("El plan publicado no tiene anomalías", E.getAnomalyWarnings(nueva.plan).length === 0,
+    E.getAnomalyWarnings(nueva.plan).map((w) => w.text || w).join(" | "));
+
+  // --- Idempotencia: es lo que impide publicar dos veces ---
+  const r2 = E.autoPublishDueWeek(r.updated);
+  check("Llamarla de nuevo no publica una segunda semana", r2.published === null && r2.reason === "ya-existe", r2.reason);
+  const r3 = E.autoPublishDueWeek(r2.updated);
+  check("Ni una tercera vez", r3.published === null);
+  check("No altera el registro cuando no publica", r2.updated === r.updated);
+
+  // --- Casos en los que NO debe tocar nada ---
+  check("No publica si la semana de hoy ya existe",
+    E.autoPublishDueWeek(base({ weeks: { ...base().weeks, 4: semana(false) } })).published === null);
+  check("No publica si el coach pausó la semana en curso",
+    E.autoPublishDueWeek(base({ weeks: { ...base().weeks, 4: semana(false, 45, { paused: true }) } })).published === null);
+  check("No publica si el alumno ya envió la semana de hoy",
+    E.autoPublishDueWeek(base({ weeks: { ...base().weeks, 4: semana(true) } })).published === null);
+  check("No publica si el alumno no tiene ninguna semana",
+    E.autoPublishDueWeek(base({ weeks: {} })).published === null);
+  check("No inventa semanas de un hueco pasado",
+    E.autoPublishDueWeek(base({ planStartMonday: inicioHace(1), weeks: { 1: semana(true), 3: semana(false) } })).published === null);
+  check("Tolera un registro vacío sin romperse", E.autoPublishDueWeek(null).published === null);
+  check("Tolera un registro sin semanas sin romperse", E.autoPublishDueWeek({ id: "x" }).published === null);
+
+  // --- Después de una ausencia NO se avanza el ciclo ---
+  const aus = E.autoPublishDueWeek(base({ planStartMonday: inicioHace(5) })); // hoy = semana 6
+  check("Tras una ausencia publica la semana del calendario", aus.published === 6, `publicó ${aus.published}`);
+  check("Tras una ausencia repite estructura, no avanza el ciclo", aus.kind === "repetida", `fue ${aus.kind}`);
+  check("Las semanas sin plan quedan registradas como sin actividad",
+    aus.updated.weeks[4]?.inactive === true && aus.updated.weeks[5]?.inactive === true);
+  check("La semana repetida conserva el volumen de la última real", aus.updated.weeks[6].weeklyKm === 45, `dio ${aus.updated.weeks[6].weeklyKm}`);
+  check("La semana repetida avisa al coach que la revise", (aus.updated.weeks[6].note || "").includes("Revisá"));
+  check("Tras una ausencia también es idempotente", E.autoPublishDueWeek(aus.updated).published === null);
+
+  // --- Adherencia real: la semana ya fue vivida, aunque no se haya enviado ---
+  const floja = base({ weeks: { 1: semana(true), 2: semana(true), 3: semana(false) } });
+  const rFloja = E.autoPublishDueWeek(floja);
+  const rBuena = E.autoPublishDueWeek(base());
+  check("Usa la adherencia real de la semana que terminó", rFloja.adherencePct === 0, `dio ${rFloja.adherencePct}`);
+  check("Con adherencia baja no sube el volumen igual que con adherencia alta",
+    rFloja.updated.weeks[4].weeklyKm <= rBuena.updated.weeks[4].weeklyKm,
+    `${rFloja.updated.weeks[4].weeklyKm} vs ${rBuena.updated.weeks[4].weeklyKm}`);
+
+  // --- El contador de semanas a la carrera se corrige si el coach preparó de más ---
+  const adel = base({ planStartMonday: inicioHace(4), currentWeek: 3, weeksToRace: 9,
+    weeks: { 1: semana(true), 2: semana(true), 3: semana(true), 4: semana(true, 48) } });
+  check("Corre el contador cuando se cierra una semana preparada por adelantado",
+    E.shiftWeeksToRace(adel, 4) === 8, `dio ${E.shiftWeeksToRace(adel, 4)}`);
+  const rAdel = E.autoPublishDueWeek(adel);
+  check("Publica la semana 5 y cierra la 4", rAdel.published === 5 && rAdel.updated.weeks[4].submitted === true);
+  check("La semana 5 queda con las semanas a carrera correctas", rAdel.updated.weeksToRace === 7, `dio ${rAdel.updated.weeksToRace}`);
+
+  // --- Planes de fitness y principiante ---
+  const fitSemana = (stage, done) => ({
+    weeklyKm: null, phase: "principiante",
+    plan: E.buildBeginnerPlan(stage, "fitness16", "principiante"),
+    log: E.emptyLog().map((l) => ({ ...l, completed: done })), submitted: true,
+  });
+  const fit = { id: "f", name: "Fit", goal: "fitness16", level: "principiante", paces,
+    beginnerStage: 4, trainDays: [0, 2, 5], planStartMonday: inicioHace(3), currentWeek: 3,
+    weeks: { 1: fitSemana(2, true), 2: fitSemana(3, true), 3: fitSemana(4, true) } };
+  const rFit = E.autoPublishDueWeek(fit);
+  check("También publica en los planes de fitness", rFit.published === 4);
+  check("En fitness avanza de etapa si la adherencia fue buena", rFit.updated.beginnerStage === 5, `dio ${rFit.updated.beginnerStage}`);
+  const fitFlojo = { ...fit, weeks: { ...fit.weeks, 3: fitSemana(4, false) } };
+  check("En fitness NO avanza de etapa si la adherencia fue baja",
+    E.autoPublishDueWeek(fitFlojo).updated.beginnerStage === 4);
+  const fitPausado = { ...fit, weeks: { ...fit.weeks, 3: { ...fitSemana(4, false), paused: true } } };
+  check("Una semana pausada no hace avanzar la etapa",
+    E.autoPublishDueWeek(fitPausado).updated.beginnerStage === 4);
+
+  // --- La fecha inyectada manda, no el reloj del servidor ---
+  const a = base({ planStartMonday: inicioHace(2) }); // hoy = semana 3, ya existe
+  const proxLunes = new Date(lunesHoy); proxLunes.setDate(proxLunes.getDate() + 7);
+  const domAnterior = new Date(lunesHoy); domAnterior.setDate(domAnterior.getDate() - 1);
+  check("Con la fecha de hoy no publica (la semana existe)", E.autoPublishDueWeek(a).published === null);
+  check("Con la fecha del lunes siguiente publica la semana 4", E.autoPublishDueWeek(a, iso(proxLunes)).published === 4);
+  check("Con la fecha del domingo anterior no publica", E.autoPublishDueWeek(a, iso(domAnterior)).published === null);
+  check("Una fecha inválida cae en el reloj local sin romperse", E.autoPublishDueWeek(a, "no-es-fecha").published === null);
+
+  // --- La fecha que manda el navegador no se acepta a ciegas ---
+  // Sin este filtro, un alumno podría mandar una fecha futura y destrabarse semanas que
+  // todavía no le corresponden.
+  const hoyUTC = new Date().toISOString().slice(0, 10);
+  const enDias = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
+  check("Acepta la fecha de hoy", E.sanitizeLocalDate(hoyUTC) === hoyUTC);
+  check("Acepta un día de diferencia (zonas horarias del mundo)", E.sanitizeLocalDate(enDias(1)) !== null && E.sanitizeLocalDate(enDias(-1)) !== null);
+  check("Rechaza una fecha 2 días adelante", E.sanitizeLocalDate(enDias(2)) === null);
+  check("Rechaza una fecha muy futura", E.sanitizeLocalDate(enDias(60)) === null);
+  check("Rechaza una fecha muy pasada", E.sanitizeLocalDate(enDias(-60)) === null);
+  check("Rechaza otro formato de fecha", E.sanitizeLocalDate("14/10/2026") === null);
+  check("Rechaza lo que no sea texto", E.sanitizeLocalDate(123) === null && E.sanitizeLocalDate(null) === null);
+  check("Rechaza una fecha inexistente", E.sanitizeLocalDate("2026-13-45") === null);
+
+  // --- Barrido: ningún alumno puede quedarse sin plan un lunes ---
+  let sinPlan = 0, revisados = 0;
+  for (const goalId of ["10k", "21k", "42k", "fitness16"]) {
+    for (const level of ["principiante", "intermedio1", "intermedio2", "avanzado1"]) {
+      for (const semanasAtras of [0, 1, 2, 3]) {
+        const esFit = E.isFitnessGoal(goalId);
+        const wk = esFit ? fitSemana(3, true) : semana(true);
+        const s = {
+          id: "b", name: "B", goal: goalId, level, paces, peakKm: 70, peakLongKm: 20,
+          weeksToRace: 10, beginnerStage: 3, trainDays: [0, 2, 5],
+          planStartMonday: inicioHace(3 + semanasAtras), currentWeek: 3,
+          weeks: { 1: wk, 2: wk, 3: wk },
+        };
+        revisados++;
+        const res = E.autoPublishDueWeek(s);
+        const despues = res.updated;
+        const hoy = E.getTodayWeekNum(despues);
+        const sem = despues.weeks[hoy];
+        const tienePlan = !!sem && Array.isArray(sem.plan) && sem.plan.some((x) => x?.paceKey);
+        if (!tienePlan) { sinPlan++; }
+      }
+    }
+  }
+  check("Hay combinaciones suficientes que revisar", revisados === 64, `revisados ${revisados}`);
+  check("Después de publicar, NINGÚN alumno queda sin plan en su semana de hoy", sinPlan === 0,
+    `${sinPlan} de ${revisados} quedaron sin plan`);
 }
 
 // ============================================================
