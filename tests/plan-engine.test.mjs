@@ -467,15 +467,30 @@ console.log("▸ Descansos de las series");
       E.R_RECOVERY_MIN[dists[i]] > E.R_RECOVERY_MIN[dists[i - 1]]);
   }
 
-  // El descanso debe reflejarse en las fases del entrenamiento en vivo.
+  // El descanso debe reflejarse en las fases del entrenamiento en vivo, Y EN MINUTOS.
+  // Antes se convertía a kilómetros y el redondeo a medios kilómetros dejaba la
+  // recuperación de los 200m en 0 km: en vivo, el alumno veía un paso vacío.
   const day = { paceKey: "R", km: 12, distOverride: 0.4, repsOverride: 6,
                 targetPace: 3.5, hmPace: 4.0, easyPace: 4.4 };
-  const segs = E.buildLiveSegments(day, 4.4);
-  const rec = segs.find((s) => s.label === "Recuperación");
-  const expectedKm = Math.round((2 / 4.4) * 10) / 10; // 2 minutos al ritmo suave
-  check("La recuperación en vivo usa el descanso nuevo",
-    rec && Math.abs(rec.target - expectedKm) < 0.15,
-    `dio ${rec ? rec.target : "ninguna"} km, se esperaba ~${expectedKm}`);
+  const rec = E.buildLiveSegments(day, 4.4).find((s) => s.label === "Recuperación");
+  check("La recuperación en vivo va en minutos, no en kilómetros", rec?.type === "time", `dio tipo ${rec?.type}`);
+  check("La recuperación en vivo usa el descanso de la metodología", rec?.target === 2, `dio ${rec?.target}`);
+
+  // Ninguna distancia de serie puede quedar con una recuperación vacía.
+  for (const d of dists) {
+    const dia = { paceKey: "R", km: 12, distOverride: d, repsOverride: 6,
+                  targetPace: 3.5, hmPace: 4.0, easyPace: 6.2 };
+    const r = E.buildLiveSegments(dia, 6.2).find((s) => s.label === "Recuperación");
+    check(`La recuperación de ${d * 1000}m no queda vacía en vivo`,
+      r && r.type === "time" && r.target === E.R_RECOVERY_MIN[d],
+      `dio ${r?.target} (${r?.type})`);
+  }
+  // Los intervalos (I) comparten el mismo trato.
+  const diaI = { paceKey: "I", km: 14, distOverride: 1, repsOverride: 5,
+                 targetPace: 3.8, hmPace: 4.0, marathonPace: 4.4, easyPace: 6.2 };
+  const recI = E.buildLiveSegments(diaI, 6.2).find((s) => s.label === "Recuperación");
+  check("La recuperación de los intervalos también va en minutos",
+    recI?.type === "time" && recI.target > 0, `dio ${recI?.target} (${recI?.type})`);
 }
 
 // ============================================================
@@ -923,6 +938,124 @@ console.log("\n▸ Publicación automática de la semana");
   check("Hay combinaciones suficientes que revisar", revisados === 64, `revisados ${revisados}`);
   check("Después de publicar, NINGÚN alumno queda sin plan en su semana de hoy", sinPlan === 0,
     `${sinPlan} de ${revisados} quedaron sin plan`);
+}
+
+// ============================================================
+// 20. TRADUCCIÓN AL FORMATO DE intervals.icu (envío al reloj)
+// ============================================================
+console.log("\n▸ Traducción de las sesiones al formato de intervals.icu");
+{
+  const IC = await import("../lib/intervals-icu.mjs");
+  const paces = E.computeTrainingPaces(E.computeVDOT(21.0975, E.parsePaceToDecimal("4:30")));
+
+  // --- Unidades: acá un error se traduce en un entrenamiento absurdo en el reloj ---
+  check("Las distancias bajo 1 km van en metros", IC.fmtDistancia(0.6) === "600mtr", IC.fmtDistancia(0.6));
+  check("Las distancias de 1 km o más van en km", IC.fmtDistancia(3) === "3km", IC.fmtDistancia(3));
+  check("Una distancia de cero no genera paso", IC.fmtDistancia(0) === null);
+  check("Los minutos enteros se escriben con m", IC.fmtTiempo(30) === "30m", IC.fmtTiempo(30));
+  check("Los segundos sueltos se escriben con s", IC.fmtTiempo(20 / 60) === "20s", IC.fmtTiempo(20 / 60));
+  check("Los tiempos mixtos se escriben m+s", IC.fmtTiempo(1.5) === "1m30s", IC.fmtTiempo(1.5));
+  check("Un tiempo de cero no genera paso", IC.fmtTiempo(0) === null);
+  check("El ritmo se escribe en min:seg por km", IC.fmtRitmo(4.5) === "4:30/km Pace", IC.fmtRitmo(4.5));
+
+  const semana = (goalId, fase, nivel, km, fondo, q1, q2, semanasCarrera) => {
+    const plan = E.buildRacePlan(goalId, fase, nivel, km, fondo, q1, q2, paces, semanasCarrera, E.getTaperWeeks(goalId));
+    const lunes = E.mondayOf(new Date()); lunes.setDate(lunes.getDate() - 14);
+    return { id: "s1", name: "Prueba", paces, planStartMonday: E.localDateISO(lunes), currentWeek: 3,
+             weeks: { 3: { weeklyKm: km, phase: fase, plan, log: E.emptyLog(), submitted: false } } };
+  };
+
+  const alumno = semana("21k", "peak", "intermedio2", 55, 16, "R", "T", 6);
+  const eventos = IC.semanaAEventos(alumno, 3);
+  const diasConSesion = alumno.weeks[3].plan.filter((d) => d?.paceKey).length;
+
+  check("Cada día de entrenamiento genera un evento", eventos.length === diasConSesion, `${eventos.length} vs ${diasConSesion}`);
+  check("Los días de descanso no se mandan al reloj", eventos.length < 7);
+  check("Todos los eventos son de categoría WORKOUT", eventos.every((e) => e.category === "WORKOUT"));
+  check("Todos los eventos llevan descripción con pasos", eventos.every((e) => e.description && e.description.includes("- ")));
+  check("Todos los eventos llevan identificador propio",
+    eventos.every((e) => e.external_id.startsWith(IC.EXTERNAL_ID_PREFIX)));
+  check("Los identificadores no se repiten entre sí", new Set(eventos.map((e) => e.external_id)).size === eventos.length);
+
+  // Idempotencia: el mismo plan dos veces da los mismos identificadores, que es lo que
+  // hace que reenviar una semana ACTUALICE el reloj en vez de duplicar las sesiones.
+  const otraVez = IC.semanaAEventos(alumno, 3);
+  check("Reenviar la misma semana produce los mismos identificadores",
+    JSON.stringify(otraVez.map((e) => e.external_id)) === JSON.stringify(eventos.map((e) => e.external_id)));
+  check("Semanas distintas no comparten identificadores",
+    IC.externalIdFor("s1", 3, 1) !== IC.externalIdFor("s1", 4, 1));
+  check("Alumnos distintos no comparten identificadores",
+    IC.externalIdFor("s1", 3, 1) !== IC.externalIdFor("s2", 3, 1));
+
+  // Las fechas tienen que caer en el día correcto de la semana del alumno.
+  const lunesDeLa3 = IC.semanaLunes(alumno, 3);
+  for (const ev of eventos) {
+    const idx = Number(ev.external_id.split("-d")[1]);
+    const esperada = new Date(lunesDeLa3);
+    esperada.setDate(esperada.getDate() + idx);
+    check(`El evento del día ${idx} cae en su fecha`,
+      ev.start_date_local.startsWith(E.localDateISO(esperada)),
+      `${ev.start_date_local} vs ${E.localDateISO(esperada)}`);
+  }
+
+  // --- La sesión de series, que es la que más se puede estropear ---
+  const series = eventos.find((e) => e.name.includes("Series"));
+  check("La sesión de series llega al reloj", !!series);
+  if (series) {
+    const t = series.description;
+    check("Las series se agrupan en un bloque de repeticiones", /^\d+x$/m.test(t), t);
+    check("Las repeticiones llevan su distancia en metros", /\d+mtr/.test(t), t);
+    check("Las repeticiones llevan ritmo objetivo", /mtr \d+:\d\d\/km Pace/.test(t), t);
+    check("La recuperación de las series NO queda vacía", /Recuperación \d+m/.test(t), t);
+    check("El cool-down queda fuera del bloque de repeticiones",
+      t.trim().split("\n").pop().includes("Cool-down"), t);
+  }
+
+  // --- Barrido: ninguna sesión puede salir mal formada ---
+  // "600m" en su sintaxis significa 600 MINUTOS. Si una distancia menor a 1 km se
+  // escribiera con "m" en vez de "mtr", el alumno recibiría una serie de diez horas.
+  let revisadas = 0, sinRitmo = 0, pasoVacio = 0, unidadPeligrosa = 0, bloqueMalFormado = 0;
+  for (const goalId of ["10k", "21k", "42k"]) {
+    for (const nivel of ["principiante", "intermedio1", "intermedio2", "avanzado1", "avanzado2"]) {
+      for (const fase of ["base", "build", "peak", "taper"]) {
+        for (const [km, fondo] of [[30, 10], [55, 16], [90, 26]]) {
+          const qp = E.suggestQualityPaces(goalId, fase, 6, E.getTaperWeeks(goalId), E.getCyclePosition(6, 1), nivel);
+          const s = semana(goalId, fase, nivel, km, fondo, qp.q1, qp.q2, 6);
+          for (const ev of IC.semanaAEventos(s, 3)) {
+            revisadas++;
+            const lineas = ev.description.split("\n");
+            for (const l of lineas) {
+              if (!l.startsWith("- ")) continue;
+              // Un paso tiene que declarar SIEMPRE una duración o una distancia.
+              if (!/(\d+mtr|[\d.]+km|\d+m(\d+s)?\b|\d+s\b|\d+h)/.test(l)) pasoVacio++;
+              // Una distancia en metros jamás puede escribirse con "m" suelta.
+              if (/\b\d{3,4}m\b(?!tr)/.test(l)) unidadPeligrosa++;
+            }
+            if (!/\d+:\d\d\/km Pace/.test(ev.description)) sinRitmo++;
+            // Un bloque "Nx" necesita línea en blanco antes y después.
+            lineas.forEach((l, k) => {
+              if (!/^\d+x$/.test(l)) return;
+              if (k > 0 && lineas[k - 1].trim() !== "") bloqueMalFormado++;
+            });
+          }
+        }
+      }
+    }
+  }
+  check("Hay sesiones suficientes que revisar", revisadas > 200, `revisadas ${revisadas}`);
+  check("Ninguna sesión sale sin ritmo objetivo", sinRitmo === 0, `${sinRitmo} de ${revisadas}`);
+  check("Ningún paso sale sin duración ni distancia", pasoVacio === 0, `${pasoVacio} pasos`);
+  check("Ninguna distancia en metros usa la unidad equivocada", unidadPeligrosa === 0, `${unidadPeligrosa} pasos`);
+  check("Ningún bloque de repeticiones queda mal formado", bloqueMalFormado === 0, `${bloqueMalFormado} bloques`);
+
+  // --- Casos límite ---
+  check("Un alumno sin esa semana no genera eventos", IC.semanaAEventos(alumno, 99).length === 0);
+  check("Un alumno sin datos no rompe", IC.semanaAEventos(null, 3).length === 0);
+  check("Una semana sin plan no genera eventos",
+    IC.semanaAEventos({ id: "x", weeks: { 1: {} }, planStartMonday: "2026-01-05" }, 1).length === 0);
+  check("Un día de descanso no se traduce", IC.sesionATexto({ paceKey: "", km: 0 }, 6) === null);
+  check("Sin fecha de inicio no se inventan eventos",
+    IC.semanaAEventos({ id: "x", paces, weeks: alumno.weeks }, 3).length === 0);
 }
 
 // ============================================================
