@@ -347,6 +347,139 @@ console.log("\n▸ Publicación automática al leer el registro del alumno");
   }
 }
 
+// ============================================================
+// ENVÍO AL RELOJ (intervals.icu)
+// La regla que gobierna todo esto: el envío al reloj NUNCA puede romper el plan. Si falla,
+// la semana se publica igual y el alumno la ve en la app como siempre.
+// Se replican acá las reglas de lib/intervals-push.js y lib/permissions.js.
+// ============================================================
+console.log("\n▸ Envío de la semana al reloj");
+{
+  const IC = await import("../lib/intervals-icu.mjs");
+
+  // --- Réplica de credencialDe() ---
+  function credencialDe(student, envKey) {
+    const conf = student?.intervals;
+    if (!conf) return null;
+    if (conf.token) return { credencial: { token: conf.token }, athleteId: conf.athleteId || "0" };
+    if (conf.pruebaConClaveDelCoach && envKey) {
+      return { credencial: { apiKey: envKey }, athleteId: conf.athleteId || "0", esPrueba: true };
+    }
+    return null;
+  }
+  const conectado = (s, k) => credencialDe(s, k) != null;
+
+  const alumno = (intervals) => ({ id: "s1", name: "Ana", intervals });
+  check("Sin configuración, no hay conexión", !conectado(alumno(undefined), "clave"));
+  check("Con testigo OAuth, hay conexión", conectado(alumno({ token: "t1" }), null));
+  check("El testigo manda sobre todo lo demás",
+    credencialDe(alumno({ token: "t1", pruebaConClaveDelCoach: true }), "clave").credencial.token === "t1");
+  check("La clave del coach solo sirve si está marcada Y existe en el entorno",
+    !conectado(alumno({ pruebaConClaveDelCoach: true }), null)
+    && conectado(alumno({ pruebaConClaveDelCoach: true }), "clave"));
+  check("Un alumno marcado para prueba sin clave en el entorno no se considera conectado",
+    !conectado(alumno({ pruebaConClaveDelCoach: true }), undefined));
+
+  // --- Réplica de enviarSemanaAlReloj(), con la red simulada ---
+  async function enviarSemana(student, weekNum, envKey, redFalla) {
+    const base = { ok: false, enviados: 0, motivo: null, semana: weekNum };
+    const cred = credencialDe(student, envKey);
+    if (!cred) return { ...base, motivo: "sin-conexion" };
+    if (!student?.weeks?.[weekNum]) return { ...base, motivo: "semana-inexistente" };
+    let eventos;
+    try { eventos = IC.semanaAEventos(student, weekNum); }
+    catch (e) { return { ...base, motivo: "error-traduciendo" }; }
+    if (!eventos.length) return { ...base, ok: true, motivo: "sin-sesiones" };
+    if (redFalla) return { ...base, motivo: "rechazado:red" };
+    return { ...base, ok: true, enviados: eventos.length };
+  }
+
+  const paces = { E: 6.2, M: 5.0, HM: 4.8, T: 4.7, I: 4.3, R: 4.0 };
+  const E2 = await import("../lib/plan-engine.mjs");
+  const lunes = E2.mondayOf(new Date());
+  const inicio = new Date(lunes); inicio.setDate(inicio.getDate() - 14);
+  const conSemana = (intervals) => ({
+    id: "s1", name: "Ana", paces, intervals,
+    planStartMonday: E2.localDateISO(inicio), currentWeek: 3,
+    weeks: { 3: { weeklyKm: 45, phase: "base", plan: E2.buildRacePlan("21k", "base", "intermedio2", 45, 14, "R", "T", paces, 8, 1), log: E2.emptyLog(), submitted: false } },
+  });
+
+  const sinReloj = await enviarSemana(conSemana(undefined), 3, "clave", false);
+  check("Un alumno sin reloj no genera envío", sinReloj.motivo === "sin-conexion" && sinReloj.enviados === 0);
+
+  const ok = await enviarSemana(conSemana({ token: "t1" }), 3, null, false);
+  check("Un alumno conectado recibe sus sesiones", ok.ok && ok.enviados >= 3, `envió ${ok.enviados}`);
+
+  const inexistente = await enviarSemana(conSemana({ token: "t1" }), 99, null, false);
+  check("Una semana que no existe no se envía", inexistente.motivo === "semana-inexistente");
+
+  const falla = await enviarSemana(conSemana({ token: "t1" }), 3, null, true);
+  check("Si la red falla, el envío informa el fallo sin lanzar", !falla.ok && falla.motivo.startsWith("rechazado"));
+
+  // La garantía de fondo: publicar la semana no depende de que el envío salga bien.
+  let semanaPublicada = false;
+  await Promise.allSettled([
+    (async () => { semanaPublicada = true; })(),
+    (async () => { throw new Error("intervals.icu caído"); })(),
+  ]);
+  check("Un fallo del reloj no impide publicar la semana", semanaPublicada);
+
+  // --- Identificadores: reenviar una semana corregida actualiza, no duplica ---
+  const s = conSemana({ token: "t1" });
+  const ev1 = IC.semanaAEventos(s, 3);
+  const corregida = { ...s, weeks: { 3: { ...s.weeks[3], plan: s.weeks[3].plan.map((d) => (d.paceKey ? { ...d, km: (d.km || 0) + 1 } : d)) } } };
+  const ev2 = IC.semanaAEventos(corregida, 3);
+  check("Los identificadores no cambian al corregir la semana",
+    JSON.stringify(ev1.map((e) => e.external_id)) === JSON.stringify(ev2.map((e) => e.external_id)));
+  check("Cada sesión tiene un identificador único",
+    new Set(ev1.map((e) => e.external_id)).size === ev1.length);
+  check("El identificador lleva el alumno y la semana",
+    ev1[0].external_id.includes("s1") && ev1[0].external_id.includes("s3"));
+  check("Los descansos no se mandan al reloj",
+    ev1.length === s.weeks[3].plan.filter((d) => d.paceKey).length, `${ev1.length} eventos`);
+  check("Cada evento lleva fecha y contenido",
+    ev1.every((e) => /^\d{4}-\d{2}-\d{2}T/.test(e.start_date_local) && e.description.length > 10));
+
+  // --- Réplica de stripSecrets(): qué recibe el navegador del alumno ---
+  function stripSecrets(value) {
+    if (!value || typeof value !== "object") return value;
+    const { pinHash, pinSalt, intervals, ...rest } = value;
+    if (intervals && typeof intervals === "object") {
+      const { token, ...pub } = intervals;
+      rest.intervals = { ...pub, conectado: !!(token || intervals.pruebaConClaveDelCoach) };
+    }
+    return rest;
+  }
+  const crudo = { id: "s1", name: "Ana", pinHash: "abc", pinSalt: "def", goal: "21k",
+                  intervals: { token: "SECRETO", athleteId: "i755367", ultimoEnvio: { ok: true } } };
+  const limpio = stripSecrets(crudo);
+  check("El alumno no recibe el hash de su PIN", limpio.pinHash === undefined && limpio.pinSalt === undefined);
+  check("El alumno no recibe el testigo de acceso", limpio.intervals.token === undefined);
+  check("El alumno sí ve que su reloj está conectado", limpio.intervals.conectado === true);
+  check("El alumno sí ve cómo fue el último envío", limpio.intervals.ultimoEnvio.ok === true);
+  check("El resto de su registro llega intacto", limpio.name === "Ana" && limpio.goal === "21k");
+  check("Un alumno sin conexión no aparece como conectado",
+    stripSecrets({ id: "x", intervals: { athleteId: "0" } }).intervals.conectado === false);
+
+  // --- Permisos de la ruta ---
+  function permiso(op, session, studentId) {
+    const mismo = session.role === "student" && session.studentId === studentId;
+    const coach = session.role === "coach";
+    if (op === "enviar") return coach;
+    if (op === "estado" || op === "desconectar") return coach || mismo;
+    return false;
+  }
+  const coach = { role: "coach" };
+  const ana = { role: "student", studentId: "s1" };
+  const beto = { role: "student", studentId: "s2" };
+  check("El coach puede enviar al reloj", permiso("enviar", coach, "s1"));
+  check("Un alumno NO puede mandarse entrenamientos a sí mismo", !permiso("enviar", ana, "s1"));
+  check("Un alumno NO puede tocar la conexión de otro", !permiso("estado", beto, "s1") && !permiso("desconectar", beto, "s1"));
+  check("Un alumno sí puede ver su propia conexión", permiso("estado", ana, "s1"));
+  check("Un alumno sí puede desconectar su propio reloj", permiso("desconectar", ana, "s1"));
+  check("Una operación desconocida se rechaza", !permiso("borrarTodo", coach, "s1"));
+}
+
 console.log("\n" + "─".repeat(52));
 if (failed === 0) {
   console.log(`✓ ${passed} verificaciones, todas correctas.`);

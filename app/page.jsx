@@ -1,5 +1,5 @@
 "use client";
-import { safeGet, safeSet, safeDelete, safeGetWithRetry, updateRosterEntry, fetchRosterSummary, safeGetPersonal, safeSetPersonal, safeDeletePersonal, authStatus, coachSetup, coachLogin, studentList, studentLogin, logout } from "../lib/storage";
+import { safeGet, safeSet, safeDelete, safeGetWithRetry, updateRosterEntry, fetchRosterSummary, intervalsOp, safeGetPersonal, safeSetPersonal, safeDeletePersonal, authStatus, coachSetup, coachLogin, studentList, studentLogin, logout } from "../lib/storage";
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Users, User, Plus, ArrowLeft, Check, Flag, TrendingUp, TrendingDown,
@@ -2892,6 +2892,20 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
     setSavedFlash(true);
     setTimeout(() => setSavedFlash(false), 2000);
   };
+  // Enviar la semana al reloj del alumno. Es una acción aparte del guardado: el plan ya
+  // está guardado, esto solo lo empuja al reloj. Si falla, se dice por qué y no se toca nada.
+  const [enviandoReloj, setEnviandoReloj] = useState(false);
+  const [envioReloj, setEnvioReloj] = useState(null);
+  const enviarSemanaAlReloj = async (weekNum) => {
+    if (!student) return;
+    setEnviandoReloj(true);
+    setEnvioReloj(null);
+    const r = await intervalsOp("enviar", student.id, { weekNum });
+    setEnvioReloj(r);
+    setEnviandoReloj(false);
+    if (r?.ok) setTimeout(() => setEnvioReloj(null), 6000);
+  };
+
   // "Revisada, está bien así": el coach acepta la semana automática tal cual.
   const markAutoWeekReviewed = async () => {
     if (!student) return;
@@ -4054,6 +4068,29 @@ const resetPlan = async () => {
                 <button onClick={() => exportWeekToPDF(student, week, activeWeekNum)} className="flex items-center gap-2 text-sm px-4 py-2 rounded-lg font-semibold" style={{ background: COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
                   <Download size={14} /> Exportar a PDF
                 </button>
+                {/* Solo aparece si el alumno conectó su reloj. Para el resto no hay botón
+                    que no lleve a ninguna parte. El coach recibe el registro completo, así
+                    que ve el testigo; el alumno recibe solo el indicador "conectado", porque
+                    el servidor le quita el testigo antes de responderle. */}
+                {(student.intervals?.conectado || student.intervals?.token || student.intervals?.pruebaConClaveDelCoach) && (
+                  <button onClick={() => enviarSemanaAlReloj(activeWeekNum)} disabled={busy || enviandoReloj}
+                    className="flex items-center gap-2 text-sm px-4 py-2 rounded-lg font-semibold"
+                    style={{ background: COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
+                    <Activity size={14} />
+                    {enviandoReloj ? "Enviando…" : "Enviar al reloj"}
+                  </button>
+                )}
+                {envioReloj && (
+                  <span className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg"
+                    style={{
+                      color: envioReloj.ok ? COLORS.easy : COLORS.hard,
+                      background: (envioReloj.ok ? COLORS.easy : COLORS.hard) + "18",
+                    }}>
+                    {envioReloj.ok
+                      ? <><Check size={12} /> {envioReloj.enviados} sesiones enviadas · pueden tardar unos minutos en aparecer</>
+                      : <><AlertCircle size={12} /> No se pudo enviar ({envioReloj.motivo})</>}
+                  </span>
+                )}
                 <div className="flex items-center gap-1.5">
                   <select value={reportWeekNum ?? activeWeekNum} onChange={(e) => setReportWeekNum(Number(e.target.value))}
                     className="text-sm px-2 py-2 rounded-lg" style={{ background: COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
