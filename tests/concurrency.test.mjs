@@ -480,6 +480,107 @@ console.log("\n▸ Envío de la semana al reloj");
   check("Una operación desconocida se rechaza", !permiso("borrarTodo", coach, "s1"));
 }
 
+// ============================================================
+// CONEXIÓN DE LA CUENTA DEL ALUMNO (OAuth con intervals.icu)
+// Es la parte más delicada: si el "state" o la sesión se pudieran falsificar, alguien
+// podría inducir a un alumno a conectar una cuenta ajena a su ficha, o apropiarse de la
+// conexión de otro. Se replican acá las reglas de lib/session.js y del callback.
+// ============================================================
+console.log("\n▸ Conexión de la cuenta con intervals.icu");
+{
+  const crypto = await import("node:crypto");
+  const SECRETO = "secreto-de-prueba-suficientemente-largo";
+  const firmar = (b64) => crypto.createHmac("sha256", SECRETO).update(b64).digest("base64url");
+
+  const crearTestigo = (payload, ms) => {
+    const body = { ...payload, exp: Date.now() + ms };
+    const b64 = Buffer.from(JSON.stringify(body)).toString("base64url");
+    return `${b64}.${firmar(b64)}`;
+  };
+  const verificar = (token) => {
+    if (!token || !SECRETO) return null;
+    const [b64, sig] = token.split(".");
+    if (!b64 || !sig) return null;
+    const a = Buffer.from(sig), b = Buffer.from(firmar(b64));
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+    try {
+      const body = JSON.parse(Buffer.from(b64, "base64url").toString());
+      if (!body.exp || body.exp < Date.now()) return null;
+      return body;
+    } catch (e) { return null; }
+  };
+  const crearState = (p) => crearTestigo({ ...p, kind: "oauth-state" }, 15 * 60 * 1000);
+  const verificarState = (t) => { const b = verificar(t); return b && b.kind === "oauth-state" ? b : null; };
+  const crearSesion = (p) => crearTestigo(p, 30 * 24 * 60 * 60 * 1000);
+
+  // --- El "state" hace su trabajo ---
+  const st = crearState({ studentId: "s1" });
+  check("El state válido se verifica y dice de qué alumno es", verificarState(st)?.studentId === "s1");
+  check("Un state alterado se rechaza", verificarState(st.slice(0, -2) + "xx") === null);
+  check("Un state sin firma se rechaza", verificarState(st.split(".")[0]) === null);
+  check("Un state vacío o ausente se rechaza",
+    verificarState("") === null && verificarState(null) === null && verificarState("basura") === null);
+  check("Un state caducado se rechaza",
+    verificarState(crearTestigo({ studentId: "s1", kind: "oauth-state" }, -1000)) === null);
+
+  // Esta es la que importa: los dos tipos de credencial no son intercambiables.
+  check("Un testigo de SESIÓN no sirve como state",
+    verificarState(crearSesion({ role: "student", studentId: "s1" })) === null);
+  const comoSesion = (t) => { const b = verificar(t); return b && b.kind !== "oauth-state" ? b : null; };
+  check("Un state NO sirve como testigo de sesión", comoSesion(st) === null);
+
+  // Firmado con otro secreto (otro servidor, un atacante) → fuera.
+  const otroFirmar = (b64) => crypto.createHmac("sha256", "otro-secreto").update(b64).digest("base64url");
+  const b64ajeno = Buffer.from(JSON.stringify({ studentId: "s1", kind: "oauth-state", exp: Date.now() + 60000 })).toString("base64url");
+  check("Un state firmado con otro secreto se rechaza", verificarState(`${b64ajeno}.${otroFirmar(b64ajeno)}`) === null);
+
+  // --- Réplica de la doble comprobación del callback ---
+  function puedeConectar(state, session) {
+    const body = verificarState(state);
+    if (!body?.studentId) return { ok: false, motivo: "enlace-caducado" };
+    if (!session) return { ok: false, motivo: "sin-sesion" };
+    const autorizado = session.role === "coach"
+      || (session.role === "student" && session.studentId === body.studentId);
+    return autorizado ? { ok: true, studentId: body.studentId } : { ok: false, motivo: "sin-permiso" };
+  }
+  const ana = { role: "student", studentId: "s1" };
+  const beto = { role: "student", studentId: "s2" };
+  const coach = { role: "coach" };
+  const stAna = crearState({ studentId: "s1" });
+
+  check("Ana puede conectar su propia cuenta", puedeConectar(stAna, ana).ok);
+  check("El coach puede conectar la de un alumno", puedeConectar(stAna, coach).ok);
+  check("Beto NO puede completar la conexión de Ana", puedeConectar(stAna, beto).motivo === "sin-permiso");
+  check("Sin sesión abierta no se completa la conexión", puedeConectar(stAna, null).motivo === "sin-sesion");
+  check("Con un state inventado no se completa", puedeConectar("inventado", ana).motivo === "enlace-caducado");
+  check("Un state caducado no se completa aunque haya sesión",
+    puedeConectar(crearTestigo({ studentId: "s1", kind: "oauth-state" }, -1000), ana).motivo === "enlace-caducado");
+
+  // --- Qué se guarda al conectar ---
+  function guardarConexion(student, canje) {
+    return { ...student, intervals: { ...(student.intervals || {}),
+      token: canje.token, athleteId: canje.athleteId ? String(canje.athleteId) : "0",
+      conectadoEl: new Date().toISOString() } };
+  }
+  const guardado = guardarConexion({ id: "s1", name: "Ana", goal: "21k" }, { token: "T", athleteId: 755367 });
+  check("Al conectar se guarda el testigo y el atleta", guardado.intervals.token === "T" && guardado.intervals.athleteId === "755367");
+  check("Conectar no toca el resto del registro", guardado.name === "Ana" && guardado.goal === "21k");
+  const reconectado = guardarConexion(guardado, { token: "T2", athleteId: 999 });
+  check("Reconectar reemplaza el testigo anterior", reconectado.intervals.token === "T2");
+
+  // --- Sin credenciales configuradas, la app no ofrece conectar ---
+  const estaConfigurado = (env) => !!(env.INTERVALS_CLIENT_ID && env.INTERVALS_CLIENT_SECRET);
+  check("Sin identificador ni secreto, no se puede conectar", !estaConfigurado({}));
+  check("Con solo uno de los dos, tampoco", !estaConfigurado({ INTERVALS_CLIENT_ID: "x" }));
+  check("Con los dos, sí", estaConfigurado({ INTERVALS_CLIENT_ID: "x", INTERVALS_CLIENT_SECRET: "y" }));
+
+  // --- Los permisos que se piden son los mínimos ---
+  const SCOPES = "CALENDAR:WRITE,ACTIVITY:READ";
+  check("Se piden solo calendario y actividades", SCOPES === "CALENDAR:WRITE,ACTIVITY:READ");
+  check("No se piden permisos de ajustes, bienestar ni chats",
+    !/SETTINGS|WELLNESS|CHATS|LIBRARY/.test(SCOPES));
+}
+
 console.log("\n" + "─".repeat(52));
 if (failed === 0) {
   console.log(`✓ ${passed} verificaciones, todas correctas.`);

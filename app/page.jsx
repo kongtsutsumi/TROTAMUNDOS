@@ -4119,6 +4119,118 @@ const resetPlan = async () => {
 /* ---------------------------------------------------------
    STUDENT PORTAL
 --------------------------------------------------------- */
+/* Conectar el reloj del alumno con intervals.icu.
+   Es opcional y reversible: sin esto la app funciona igual. Se dice de forma explícita qué
+   se va a hacer con el permiso, porque el alumno está autorizando acceso a su cuenta. */
+function ConexionReloj({ student, onCambio }) {
+  const [estado, setEstado] = useState(null);
+  const [ocupado, setOcupado] = useState(false);
+  const [confirmarCorte, setConfirmarCorte] = useState(false);
+
+  const cargar = useCallback(async () => {
+    if (!student?.id) return;
+    const r = await intervalsOp("estado", student.id);
+    setEstado(r);
+  }, [student?.id]);
+  useEffect(() => { cargar(); }, [cargar]);
+
+  // Al volver de autorizar, la dirección trae el resultado. Se lee, se limpia de la barra
+  // (para que no quede pegado al recargar) y se refresca el registro.
+  const [aviso, setAviso] = useState(null);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const p = new URLSearchParams(window.location.search);
+    const r = p.get("reloj");
+    if (!r) return;
+    setAviso({ estado: r, motivo: p.get("motivo") });
+    window.history.replaceState({}, "", window.location.pathname);
+    if (r === "conectado") { cargar(); onCambio?.(); }
+  }, [cargar, onCambio]);
+
+  if (!estado) return null;
+  // Si la conexión no está configurada en el servidor, no se le enseña al alumno un botón
+  // que no lleva a ninguna parte.
+  if (!estado.disponible && !estado.conectado) return null;
+
+  const conectar = async () => {
+    setOcupado(true);
+    const r = await intervalsOp("autorizar", student.id);
+    if (r?.url) { window.location.href = r.url; return; }
+    setAviso({ estado: "error", motivo: r?.motivo || "no-disponible" });
+    setOcupado(false);
+  };
+  const desconectar = async () => {
+    setOcupado(true);
+    await intervalsOp("desconectar", student.id);
+    setConfirmarCorte(false);
+    await cargar();
+    onCambio?.();
+    setOcupado(false);
+  };
+
+  return (
+    <div className="rounded-xl p-4 mb-4" style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}` }}>
+      <div className="flex items-center gap-2 mb-1">
+        <Activity size={16} style={{ color: estado.conectado ? COLORS.easy : COLORS.textMuted }} />
+        <span className="text-sm font-semibold" style={{ color: COLORS.textPrimary }}>
+          {estado.conectado ? "Tu reloj está conectado" : "Conectá tu reloj"}
+        </span>
+      </div>
+
+      {aviso && (
+        <p className="text-xs mb-2" style={{ color: aviso.estado === "conectado" ? COLORS.easy : COLORS.hard }}>
+          {aviso.estado === "conectado" && "Listo. Tus entrenamientos empezarán a llegarte al reloj."}
+          {aviso.estado === "cancelado" && "No autorizaste la conexión. No pasa nada: todo sigue igual."}
+          {aviso.estado === "error" && `No se pudo conectar (${aviso.motivo}). Probá de nuevo.`}
+        </p>
+      )}
+
+      {estado.conectado ? (
+        <>
+          <p className="text-sm mb-2" style={{ color: COLORS.textMuted }}>
+            Tus entrenamientos de la semana te llegan solos al reloj.
+            {estado.ultimoEnvio && (
+              estado.ultimoEnvio.ok
+                ? ` Último envío: semana ${estado.ultimoEnvio.semana}, ${estado.ultimoEnvio.enviados} sesiones.`
+                : ` El último envío no salió (${estado.ultimoEnvio.motivo}) — avisale a tu coach si no te aparecen.`
+            )}
+          </p>
+          {confirmarCorte ? (
+            <div className="flex flex-wrap gap-2 items-center">
+              <span className="text-xs" style={{ color: COLORS.textMuted }}>
+                Se quitarán del calendario los entrenamientos futuros. Lo ya entrenado no se toca.
+              </span>
+              <button onClick={desconectar} disabled={ocupado} className="px-3 py-1.5 rounded text-xs font-semibold"
+                style={{ background: COLORS.hard, color: COLORS.lane }}>Sí, desconectar</button>
+              <button onClick={() => setConfirmarCorte(false)} className="px-3 py-1.5 rounded text-xs"
+                style={{ color: COLORS.textMuted, border: `1px solid ${COLORS.border}` }}>Cancelar</button>
+            </div>
+          ) : (
+            <button onClick={() => setConfirmarCorte(true)} className="underline text-xs" style={{ color: COLORS.textMuted }}>
+              Desconectar mi reloj
+            </button>
+          )}
+        </>
+      ) : (
+        <>
+          <p className="text-sm mb-2" style={{ color: COLORS.textMuted }}>
+            Si conectás tu cuenta de intervals.icu, los entrenamientos que arma tu coach te
+            aparecen solos en el reloj, con sus ritmos. Es opcional y lo podés cortar cuando quieras.
+          </p>
+          <p className="text-xs mb-3" style={{ color: COLORS.textMuted }}>
+            Se piden dos permisos: escribir los entrenamientos en tu calendario y leer las
+            actividades que completás. Nada más.
+          </p>
+          <button onClick={conectar} disabled={ocupado} className="px-4 py-2 rounded-lg text-sm font-semibold"
+            style={{ background: COLORS.track, color: COLORS.lane }}>
+            {ocupado ? "Abriendo…" : "Conectar mi reloj"}
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
 function StudentPortal({ studentId, refreshRoster, onBack }) {
   const [student, setStudent] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -4128,6 +4240,13 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
   const [viewedWeek, setViewedWeek] = useState(null);
 
   useEffect(() => { safeGet(`student:${studentId}`).then(setStudent); }, [studentId]);
+
+  // Vuelve a leer el registro desde el servidor. Lo usa la conexión del reloj, que cambia
+  // el registro del lado del servidor y no por el camino normal de guardado.
+  const reloadStudent = useCallback(async () => {
+    const fresh = await safeGet(`student:${studentId}`);
+    if (fresh) setStudent(fresh);
+  }, [studentId]);
 
   // Refresco automático en segundo plano: si el coach hace un cambio (por ejemplo edita
   // una sesión o aprueba la siguiente semana), se refleja acá sin que el alumno tenga que
@@ -4475,6 +4594,8 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
             style={{ background: COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
             <Download size={14} /> Descargar mi semana en PDF
           </button>
+
+          <ConexionReloj student={student} onCambio={reloadStudent} />
 
           {canEditWeek && !waitingForCoach && (
             <>

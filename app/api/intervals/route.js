@@ -13,6 +13,7 @@ import { cookies } from "next/headers";
 import { kvGet } from "../../../lib/supabaseAdmin";
 import { verifySessionToken, SESSION_COOKIE } from "../../../lib/session";
 import { enviarSemanaAlReloj, desconectarReloj, estaConectado } from "../../../lib/intervals-push";
+import { urlDeAutorizacion, estaConfigurado } from "../../../lib/intervals-oauth";
 
 async function getSession() {
   const store = await cookies();
@@ -39,9 +40,23 @@ export async function POST(request) {
     if (!esCoach && !esElMismoAlumno) return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
     return NextResponse.json({
       conectado: estaConectado(student),
+      disponible: estaConfigurado(),
       athleteId: student.intervals?.athleteId ?? null,
+      nombreEnIntervals: student.intervals?.nombreEnIntervals ?? null,
+      conectadoEl: student.intervals?.conectadoEl ?? null,
       ultimoEnvio: student.intervals?.ultimoEnvio ?? null,
     });
+  }
+
+  // --- Empezar la conexión: devuelve a dónde mandar al alumno a autorizar ---
+  // El "state" se firma acá, atado a este alumno y con caducidad corta.
+  if (op === "autorizar") {
+    if (!esCoach && !esElMismoAlumno) return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
+    if (!estaConfigurado()) {
+      return NextResponse.json({ error: "La conexión con intervals.icu no está configurada" }, { status: 503 });
+    }
+    const url = urlDeAutorizacion(studentId, new URL(request.url).origin);
+    return NextResponse.json({ ok: true, url });
   }
 
   // --- Enviar la semana al reloj (solo el coach) ---
