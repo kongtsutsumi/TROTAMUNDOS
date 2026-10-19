@@ -3,6 +3,8 @@
 // Reglas de permiso, que son lo importante acá:
 //   · Enviar la semana de un alumno al reloj: SOLO el coach. Es una acción sobre el plan.
 //   · Consultar si un alumno tiene reloj conectado: el coach, o ese mismo alumno.
+//   · Traer lo entrenado: el coach, o ese mismo alumno. Es leer lo que ya ocurrió, y lo
+//     que escribe son los kilómetros y el ritmo reales de ese alumno, nunca su plan.
 //   · Desconectar: el coach, o ese mismo alumno sobre sí mismo. Un alumno siempre puede
 //     cortar su propia conexión — es su cuenta y su consentimiento.
 //
@@ -13,6 +15,7 @@ import { cookies } from "next/headers";
 import { kvGet } from "../../../lib/supabaseAdmin";
 import { verifySessionToken, SESSION_COOKIE } from "../../../lib/session";
 import { enviarSemanaAlReloj, desconectarReloj, estaConectado } from "../../../lib/intervals-push";
+import { traerDelReloj } from "../../../lib/intervals-pull";
 import { urlDeAutorizacion, estaConfigurado } from "../../../lib/intervals-oauth";
 
 async function getSession() {
@@ -45,6 +48,8 @@ export async function POST(request) {
       nombreEnIntervals: student.intervals?.nombreEnIntervals ?? null,
       conectadoEl: student.intervals?.conectadoEl ?? null,
       ultimoEnvio: student.intervals?.ultimoEnvio ?? null,
+      ultimaLectura: student.intervals?.ultimaLectura ?? null,
+      errorDeLectura: student.intervals?.errorDeLectura ?? null,
     });
   }
 
@@ -67,6 +72,18 @@ export async function POST(request) {
       return NextResponse.json({ error: "Semana inválida" }, { status: 400 });
     }
     const r = await enviarSemanaAlReloj(student, semana);
+    return NextResponse.json(r);
+  }
+
+  // --- Traer lo entrenado ---
+  //
+  // Se llama sola al abrir la app, así que lo normal es que no haga nada: hay un límite de
+  // una consulta cada cuarto de hora por alumno. Con "forzar" (el botón de actualizar) el
+  // límite baja a un minuto, que sigue siendo suficiente para que nadie martille el
+  // servicio sin querer.
+  if (op === "traer") {
+    if (!esCoach && !esElMismoAlumno) return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
+    const r = await traerDelReloj(student, { minutosEntreLecturas: body?.forzar === true ? 1 : 15 });
     return NextResponse.json(r);
   }
 

@@ -21,6 +21,15 @@ function isPureReorder(basePlan, incomingPlan) {
   const a = basePlan.map(fp).sort(), b = incomingPlan.map(fp).sort();
   return a.every((x, i) => x === b[i]);
 }
+function conservarLoDelReloj(incomingLog, storedLog) {
+  return (incomingLog || []).map((entry, i) => {
+    const copia = entry && typeof entry === "object" ? { ...entry } : {};
+    const guardado = storedLog?.[i];
+    if (guardado?.reloj) copia.reloj = guardado.reloj;
+    else delete copia.reloj;
+    return copia;
+  });
+}
 function mergeAsStudent(current, value) {
   const mergedWeeks = { ...current.weeks };
   for (const [wkNum, incoming] of Object.entries(value?.weeks || {})) {
@@ -28,7 +37,7 @@ function mergeAsStudent(current, value) {
     if (!base) continue;
     mergedWeeks[wkNum] = {
       ...base,
-      log: incoming.log ?? base.log,
+      log: incoming.log ? conservarLoDelReloj(incoming.log, base.log) : base.log,
       plan: isPureReorder(base.plan, incoming.plan) ? incoming.plan : base.plan,
       submitted: incoming.submitted ?? base.submitted,
       studentSubmitted: incoming.studentSubmitted ?? base.studentSubmitted,
@@ -47,7 +56,7 @@ function mergeAsCoach(current, value) {
       const se = stored.log[i];
       return se?.completed && !entry?.completed ? se : entry;
     });
-    mergedWeeks[wkNum] = { ...incoming, log: mergedLog };
+    mergedWeeks[wkNum] = { ...incoming, log: conservarLoDelReloj(mergedLog, stored.log), extras: stored.extras ?? incoming.extras };
   }
   return { ...value, weeks: mergedWeeks };
 }
@@ -579,6 +588,106 @@ console.log("\n▸ Conexión de la cuenta con intervals.icu");
   check("Se piden solo calendario y actividades", SCOPES === "CALENDAR:WRITE,ACTIVITY:READ");
   check("No se piden permisos de ajustes, bienestar ni chats",
     !/SETTINGS|WELLNESS|CHATS|LIBRARY/.test(SCOPES));
+}
+
+
+// ============================================================
+// LO QUE TRAE EL RELOJ ES DEL SERVIDOR
+// ============================================================
+//
+// Cuando el servidor lee intervals.icu escribe dos cosas que ningún navegador conoce: el
+// bloque "reloj" de cada sesión (kilómetros, ritmo, pulsaciones, vueltas) y las
+// actividades que no correspondían a ninguna sesión planificada.
+//
+// El peligro es silencioso: el alumno tiene la pantalla abierta desde antes de la lectura,
+// escribe su RPE, y al guardar manda una semana que no incluye nada de eso. Si el servidor
+// aceptara esa copia, el dato del reloj desaparecería sin que nadie se enterara. Lo mismo
+// del lado del coach.
+console.log("\n▸ Lo que trae el reloj no lo puede borrar un navegador");
+{
+  const reloj = { id: 77, km: 8, ritmo: "5:22", fcMedia: 134, via: "evento" };
+
+  const guardado = {
+    id: "ana", name: "Ana", currentWeek: 3, pinHash: "h", goal: "10k", paces: { E: 5.8 },
+    weeks: {
+      3: {
+        plan: [{ paceKey: "E", km: 8 }, { paceKey: "I", km: 12 }],
+        log: [
+          { completed: true, actualKm: "8", actualPaceStr: "5:22", rpe: "", note: "", reloj },
+          { completed: false, actualKm: "", actualPaceStr: "", rpe: "", note: "" },
+        ],
+        extras: [{ id: 99, km: 5 }],
+      },
+    },
+  };
+
+  // --- El alumno guarda desde una pantalla anterior a la lectura ---
+  const delAlumno = {
+    ...guardado,
+    weeks: {
+      3: {
+        ...guardado.weeks[3],
+        extras: undefined,
+        log: [
+          { completed: true, actualKm: "8", actualPaceStr: "5:22", rpe: "7", note: "buena" },
+          { completed: false, actualKm: "", actualPaceStr: "", rpe: "", note: "" },
+        ],
+      },
+    },
+  };
+  const trasAlumno = mergeAsStudent(guardado, delAlumno);
+  check("El RPE que escribió el alumno sí se guarda", trasAlumno.weeks[3].log[0].rpe === "7");
+  check("Su nota también", trasAlumno.weeks[3].log[0].note === "buena");
+  check("Pero NO borra lo que trajo el reloj",
+    JSON.stringify(trasAlumno.weeks[3].log[0].reloj) === JSON.stringify(reloj),
+    JSON.stringify(trasAlumno.weeks[3].log[0].reloj));
+  check("Ni las actividades extra de la semana",
+    JSON.stringify(trasAlumno.weeks[3].extras) === JSON.stringify([{ id: 99, km: 5 }]));
+
+  // --- Un alumno no puede inventarse un bloque de reloj ---
+  const inventado = {
+    ...guardado,
+    weeks: {
+      3: {
+        ...guardado.weeks[3],
+        log: [
+          guardado.weeks[3].log[0],
+          { completed: true, actualKm: "40", rpe: "1", reloj: { id: 1, km: 40, ritmo: "2:30" } },
+        ],
+      },
+    },
+  };
+  const trasInvento = mergeAsStudent(guardado, inventado);
+  check("Un alumno no puede inventarse datos de reloj",
+    trasInvento.weeks[3].log[1].reloj === undefined,
+    JSON.stringify(trasInvento.weeks[3].log[1].reloj));
+  check("Lo que sí escribió a mano se respeta", trasInvento.weeks[3].log[1].actualKm === "40");
+
+  // --- El coach guarda el plan desde una pantalla anterior a la lectura ---
+  const delCoach = {
+    ...guardado,
+    weeks: {
+      3: {
+        plan: [{ paceKey: "E", km: 9 }, { paceKey: "I", km: 12 }], // el coach cambió el plan
+        log: [
+          { completed: true, actualKm: "8", actualPaceStr: "5:22", rpe: "", note: "" },
+          { completed: false, actualKm: "", actualPaceStr: "", rpe: "", note: "" },
+        ],
+      },
+    },
+  };
+  const trasCoach = mergeAsCoach(guardado, delCoach);
+  check("El cambio de plan del coach se guarda", trasCoach.weeks[3].plan[0].km === 9);
+  check("Y NO borra lo que trajo el reloj",
+    JSON.stringify(trasCoach.weeks[3].log[0].reloj) === JSON.stringify(reloj),
+    JSON.stringify(trasCoach.weeks[3].log[0].reloj));
+  check("Ni las actividades extra",
+    JSON.stringify(trasCoach.weeks[3].extras) === JSON.stringify([{ id: 99, km: 5 }]));
+
+  // --- Una semana nueva, sin nada guardado, no se rompe ---
+  const nueva = { ...guardado, weeks: { ...guardado.weeks, 4: { plan: [{ paceKey: "E", km: 5 }], log: [{ completed: false }] } } };
+  const trasNueva = mergeAsCoach(guardado, nueva);
+  check("Una semana nueva pasa sin problema", trasNueva.weeks[4].plan[0].km === 5);
 }
 
 console.log("\n" + "─".repeat(52));

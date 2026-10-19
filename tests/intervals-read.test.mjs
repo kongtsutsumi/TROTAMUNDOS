@@ -1,0 +1,357 @@
+// Pruebas de la lectura de lo entrenado (lib/intervals-read.mjs).
+//
+// Lo que verifican, en orden de importancia:
+//
+//   · Que una actividad se pueda devolver a su sesión exacta (alumno, semana, día).
+//   · Que los números que ve el alumno cuadren con los del reloj.
+//   · Que el ritmo de una sesión de calidad SOLO se rellene cuando se pueden aislar
+//     las series. Es la regla que más fácil se rompe sin darse cuenta, y la que más
+//     daño hace: ese campo alimenta las conclusiones del reporte semanal del coach.
+//   · Que nunca se pise lo que el alumno escribió, y que el RPE no se toque jamás.
+//
+// Cómo correrlas:  npm test
+
+import * as R from "../lib/intervals-read.mjs";
+import { externalIdFor } from "../lib/intervals-icu.mjs";
+
+let passed = 0, failed = 0;
+const failures = [];
+
+function check(name, condition, detail) {
+  if (condition) { passed++; }
+  else { failed++; failures.push(`${name}${detail ? ` — ${detail}` : ""}`); }
+}
+
+// ============================================================
+// 1. DE QUÉ SESIÓN ES ESTA ACTIVIDAD
+// ============================================================
+console.log("\n▸ Identificar la sesión a la que pertenece una actividad");
+{
+  const r = R.descifrarExternalId("trotamundos-abc123-s18-d2");
+  check("Descifra alumno, semana y día",
+    r && r.studentId === "abc123" && r.semana === 18 && r.dia === 2,
+    JSON.stringify(r));
+
+  // El identificador del alumno puede llevar guiones: partir por guiones rompería esto.
+  const conGuiones = R.descifrarExternalId("trotamundos-jaime-kong-2024-s5-d0");
+  check("Soporta identificadores de alumno con guiones",
+    conGuiones && conGuiones.studentId === "jaime-kong-2024" && conGuiones.semana === 5 && conGuiones.dia === 0,
+    JSON.stringify(conGuiones));
+
+  check("Rechaza una semana 0", R.descifrarExternalId("trotamundos-abc-s0-d2") === null);
+  check("Rechaza un día fuera de la semana", R.descifrarExternalId("trotamundos-abc-s1-d9") === null);
+  check("Ignora lo que no puso esta app", R.descifrarExternalId("otraapp-abc-s1-d2") === null);
+  check("No se cae con basura", R.descifrarExternalId(null) === null && R.descifrarExternalId("") === null);
+
+  // Ida y vuelta contra el generador real: si uno cambia, esta prueba lo caza.
+  for (const [id, sem, dia] of [["a", 1, 0], ["alumno-7", 23, 6], ["x-y-z", 104, 3]]) {
+    const vuelta = R.descifrarExternalId(externalIdFor(id, sem, dia));
+    check(`Ida y vuelta ${id}/s${sem}/d${dia}`,
+      vuelta && vuelta.studentId === id && vuelta.semana === sem && vuelta.dia === dia,
+      JSON.stringify(vuelta));
+  }
+}
+
+console.log("\n▸ Ubicar una fecha dentro del plan");
+{
+  const alumno = { planStartMonday: "2026-06-15" }; // un lunes
+  check("El lunes de arranque es semana 1, día 0",
+    JSON.stringify(R.semanaYDiaDeFecha(alumno, "2026-06-15")) === '{"semana":1,"dia":0}');
+  check("El domingo de esa semana es día 6",
+    JSON.stringify(R.semanaYDiaDeFecha(alumno, "2026-06-21")) === '{"semana":1,"dia":6}');
+  check("El lunes siguiente abre la semana 2",
+    JSON.stringify(R.semanaYDiaDeFecha(alumno, "2026-06-22")) === '{"semana":2,"dia":0}');
+  check("Acepta una fecha con hora pegada",
+    JSON.stringify(R.semanaYDiaDeFecha(alumno, "2026-10-19T10:11:31")) === '{"semana":19,"dia":0}',
+    JSON.stringify(R.semanaYDiaDeFecha(alumno, "2026-10-19T10:11:31")));
+  check("Antes del arranque del plan no hay casilla",
+    R.semanaYDiaDeFecha(alumno, "2026-06-14") === null);
+  check("Sin fecha de arranque no se adivina",
+    R.semanaYDiaDeFecha({}, "2026-10-19") === null);
+}
+
+console.log("\n▸ A qué sesión pertenece cada actividad");
+{
+  const alumno = {
+    id: "ana",
+    planStartMonday: "2026-10-05",
+    weeks: {
+      2: {
+        plan: [{ paceKey: "E", km: 8 }, { paceKey: null }, { paceKey: "I", km: 12 },
+               { paceKey: null }, { paceKey: "E", km: 6 }, { paceKey: null }, { paceKey: "long", km: 18 }],
+        log: [{ completed: false }, {}, { completed: true }, {}, {}, {}, {}],
+      },
+    },
+  };
+  const mapa = new Map([
+    ["900", "trotamundos-ana-s2-d2"],
+    ["901", "trotamundos-otro-s2-d2"],
+    ["902", "algo-que-no-es-nuestro"],
+  ]);
+
+  const exacta = R.ubicarActividad({ paired_event_id: 900, start_date_local: "2026-10-14T07:00:00" }, mapa, alumno);
+  check("Con emparejamiento manda el evento, no la fecha",
+    exacta && exacta.semana === 2 && exacta.dia === 2 && exacta.via === "evento", JSON.stringify(exacta));
+
+  check("Un evento de OTRO alumno no se escribe en esta ficha",
+    R.ubicarActividad({ paired_event_id: 901, start_date_local: "2026-10-12T07:00:00" }, mapa, alumno) === null);
+
+  check("Un evento que no puso esta app se ignora",
+    R.ubicarActividad({ paired_event_id: 902, start_date_local: "2026-10-12T07:00:00" }, mapa, alumno) === null);
+
+  // Sin emparejar: cae a la fecha, pero solo donde tiene sentido.
+  const porFecha = R.ubicarActividad({ start_date_local: "2026-10-12T07:00:00" }, mapa, alumno);
+  check("Sin emparejar cae a la fecha y lo deja dicho",
+    porFecha && porFecha.semana === 2 && porFecha.dia === 0 && porFecha.via === "fecha", JSON.stringify(porFecha));
+
+  check("Un día de descanso no recibe la actividad",
+    R.ubicarActividad({ start_date_local: "2026-10-13T07:00:00" }, mapa, alumno) === null);
+
+  check("Una sesión ya marcada por el alumno no se toca",
+    R.ubicarActividad({ start_date_local: "2026-10-14T07:00:00" }, mapa, alumno) === null);
+
+  check("Una fecha sin semana en el plan no ubica nada",
+    R.ubicarActividad({ start_date_local: "2026-11-30T07:00:00" }, mapa, alumno) === null);
+
+  check("No se cae sin datos", R.ubicarActividad(null, mapa, alumno) === null);
+}
+
+// ============================================================
+// 2. EL RESUMEN DE LA ACTIVIDAD
+// ============================================================
+console.log("\n▸ Resumen de una actividad real");
+{
+  // Datos exactos de una carrera real sincronizada desde un COROS PACE 4.
+  const actividad = {
+    id: 123456,
+    name: "Morning Run",
+    type: "Run",
+    device_name: "COROS PACE 4",
+    start_date_local: "2026-10-19T10:11:31",
+    distance: 8002.18,
+    moving_time: 2576,
+    elapsed_time: 2597,
+    average_heartrate: 134,
+    max_heartrate: 148,
+    average_cadence: 87.69786,
+    total_elevation_gain: 94.084915,
+    total_elevation_loss: 114.2744,
+    calories: 479,
+    icu_training_load: 27,
+    icu_intensity: 61.19005,
+  };
+
+  const s = R.resumenDeActividad(actividad, []);
+  check("Los metros se vuelven kilómetros", s.km === 8, `dio ${s.km}`);
+  check("Los segundos se vuelven minutos", s.min === 42.9, `dio ${s.min}`);
+  check("El ritmo sale de la distancia y el tiempo, no del campo en m/s",
+    s.ritmo === "5:22", `dio ${s.ritmo}`);
+  check("La cadencia se expresa en pasos por minuto", s.cadencia === 175, `dio ${s.cadencia}`);
+  check("Frecuencia cardiaca media y máxima", s.fcMedia === 134 && s.fcMax === 148);
+  check("Desnivel redondeado", s.subida === 94 && s.bajada === 114, `+${s.subida}/-${s.bajada}`);
+  check("Carga e intensidad", s.carga === 27 && s.intensidad === 61, `${s.carga}/${s.intensidad}`);
+  check("Conserva el reloj que la registró", s.dispositivo === "COROS PACE 4");
+
+  check("Una actividad vacía no produce resumen", R.resumenDeActividad(null) === null);
+
+  // Un alumno puede tener una actividad sin distancia (cinta sin calibrar, por ejemplo).
+  const sinDistancia = R.resumenDeActividad({ id: 9, moving_time: 1800 }, []);
+  check("Sin distancia no inventa kilómetros ni ritmo",
+    sinDistancia.km === null && sinDistancia.ritmo === null && sinDistancia.min === 30,
+    JSON.stringify(sinDistancia));
+}
+
+// ============================================================
+// 3. LAS VUELTAS
+// ============================================================
+console.log("\n▸ Vueltas de la actividad");
+{
+  const vueltas = [
+    { type: "WORK", distance: 2450, moving_time: 780 },
+    { type: "WORK", distance: 90, moving_time: 60 },
+    { type: "RECOVERY", elapsed_time: 1 },           // sin distancia
+  ];
+  const s = R.resumenDeActividad({ id: 1, distance: 8000, moving_time: 2576 }, vueltas);
+  check("Guarda las vueltas con su ritmo", s.vueltas.length === 3 && s.vueltas[0].ritmo === "5:18",
+    JSON.stringify(s.vueltas[0]));
+  check("Una vuelta sin distancia no inventa ritmo", s.vueltas[2].ritmo === null && s.vueltas[2].km === null);
+}
+
+// ============================================================
+// 4. EL RITMO DE LAS SERIES  (la regla que más importa)
+// ============================================================
+console.log("\n▸ Ritmo real de una sesión de calidad");
+{
+  const easyPace = 5.8;
+  const diaI = {
+    paceKey: "I", type: "Intervalos", km: 12,
+    distOverride: 1, repsOverride: 6, paceOverride: 4.1666667,
+    recoveryOverride: 3, easyPace,
+  };
+
+  const tramos = R.tramosDeCalidad(diaI, easyPace);
+  check("Las series son tramos de calidad; el calentamiento y las recuperaciones no",
+    tramos.length === 6 && tramos.every((t) => t.type === "distance" && t.target === 1),
+    `dio ${tramos.length} tramos`);
+
+  // Una sesión bien ejecutada, con vuelta marcada en cada serie.
+  const bienHecha = [
+    { km: 3.0, seg: 1050 },                       // calentamiento
+    { km: 1.00, seg: 250 }, { km: 0.52, seg: 180 },
+    { km: 1.00, seg: 250 }, { km: 0.52, seg: 180 },
+    { km: 1.00, seg: 250 }, { km: 0.52, seg: 180 },
+    { km: 1.00, seg: 250 }, { km: 0.52, seg: 180 },
+    { km: 1.00, seg: 250 }, { km: 0.52, seg: 180 },
+    { km: 1.00, seg: 250 },
+    { km: 2.0, seg: 700 },                        // vuelta a la calma
+  ];
+  const ritmo = R.ritmoDeLasSeries(bienHecha, tramos);
+  check("Aísla las 6 series y promedia solo esas",
+    ritmo != null && Math.abs(ritmo - 4.1666667) < 0.01, `dio ${ritmo}`);
+
+  const resumenBien = { ritmo: "5:12", vueltas: bienHecha };
+  check("El ritmo que se anota es el de las series, no el de la salida entera",
+    R.ritmoParaElRegistro(diaI, resumenBien, easyPace) === "4:10",
+    R.ritmoParaElRegistro(diaI, resumenBien, easyPace));
+
+  // Hizo 5 de las 6: la sesión no es la planificada y no hay nada que promediar.
+  const incompleta = bienHecha.filter((_, i) => i !== 11);
+  check("Si falta una serie, no se inventa un promedio",
+    R.ritmoDeLasSeries(incompleta, tramos) === null);
+
+  // Reloj en vueltas automáticas de 1 km sobre una sesión de 8 x 200 m.
+  const diaR = { ...diaI, paceKey: "R", distOverride: 0.2, repsOverride: 8, paceOverride: 3.6, km: 10 };
+  const tramosR = R.tramosDeCalidad(diaR, easyPace);
+  const autoVueltas = Array.from({ length: 10 }, () => ({ km: 1.0, seg: 300 }));
+  check("Vueltas automáticas que no se parecen a las series: no se rellena",
+    R.ritmoDeLasSeries(autoVueltas, tramosR) === null);
+
+  check("Sin vueltas no hay ritmo de series",
+    R.ritmoParaElRegistro(diaI, { ritmo: "5:12", vueltas: [] }, easyPace) === null);
+
+  // En un día suave el promedio de la salida SÍ es el ritmo real de la sesión.
+  const diaE = { paceKey: "E", type: "Suave", km: 8, easyPace };
+  check("En un día suave sí se anota el promedio",
+    R.ritmoParaElRegistro(diaE, { ritmo: "5:40", vueltas: [] }, easyPace) === "5:40");
+  check("Un día suave no es sesión de calidad", R.esDeCalidad(diaE) === false);
+  check("Un día de intervalos sí lo es", R.esDeCalidad(diaI) === true);
+}
+
+// ============================================================
+// 5. EL REGISTRO DEL DÍA
+// ============================================================
+console.log("\n▸ Qué se escribe en el registro del alumno");
+{
+  const easyPace = 5.8;
+  const diaE = { paceKey: "E", type: "Suave", km: 5, easyPace };
+  const resumen = R.resumenDeActividad(
+    { id: 77, distance: 8002.18, moving_time: 2576, average_heartrate: 134 }, []);
+
+  // Registro vacío: el reloj lo completa, menos el RPE y la nota.
+  const vacio = { completed: false, actualKm: "", actualPaceStr: "", rpe: "", note: "" };
+  const a = R.logConLectura(vacio, resumen, diaE, easyPace);
+  check("Marca la sesión como hecha", a.log.completed === true);
+  check("Rellena los kilómetros reales", a.log.actualKm === "8", `dio ${a.log.actualKm}`);
+  check("Rellena el ritmo en un día suave", a.log.actualPaceStr === "5:22", a.log.actualPaceStr);
+  check("NO toca el RPE", a.log.rpe === "");
+  check("NO toca la nota", a.log.note === "");
+  check("Guarda el detalle del reloj", a.log.reloj && a.log.reloj.fcMedia === 134);
+  check("Avisa de que hay que guardar", a.cambio === true);
+
+  // Lo que el alumno escribió manda: el reloj no lo pisa.
+  const aMano = { completed: true, actualKm: "7.5", actualPaceStr: "5:30", rpe: "6", note: "pesado" };
+  const b = R.logConLectura(aMano, resumen, diaE, easyPace);
+  check("No pisa los kilómetros que puso el alumno", b.log.actualKm === "7.5");
+  check("No pisa el ritmo que puso el alumno", b.log.actualPaceStr === "5:30");
+  check("Conserva el RPE del alumno", b.log.rpe === "6");
+  check("Conserva su nota", b.log.note === "pesado");
+  check("Aun así guarda el detalle del reloj", b.log.reloj && b.log.reloj.km === 8);
+
+  // Volver a leer lo mismo no debe provocar una escritura.
+  const c = R.logConLectura(a.log, resumen, diaE, easyPace);
+  check("Leer dos veces lo mismo no cambia nada", c.cambio === false);
+
+  // Una sesión de calidad sin vueltas aprovechables deja el ritmo al alumno.
+  const diaI = { paceKey: "I", type: "Intervalos", km: 12, distOverride: 1, repsOverride: 6,
+    paceOverride: 4.1666667, recoveryOverride: 3, easyPace };
+  const d = R.logConLectura(vacio, resumen, diaI, easyPace);
+  check("En calidad sin vueltas: km sí, ritmo no", d.log.actualKm === "8" && d.log.actualPaceStr === "");
+
+  // El alumno desmarca una sesión que el reloj había marcado: la app no se la vuelve a
+  // marcar en la siguiente lectura. Sin esto, pelearía con él cada cuarto de hora.
+  const desmarcada = { ...a.log, completed: false };
+  const f = R.logConLectura(desmarcada, resumen, diaE, easyPace);
+  check("Si el alumno desmarca, el reloj no se la vuelve a marcar", f.log.completed === false);
+  check("Y no hay nada que volver a guardar", f.cambio === false);
+
+  // Pero una actividad DISTINTA el mismo día sí la marca: es una sesión nueva.
+  const otra = R.resumenDeActividad({ id: 78, distance: 6000, moving_time: 1900 }, []);
+  const g = R.logConLectura(desmarcada, otra, diaE, easyPace);
+  check("Una actividad nueva sí marca la sesión", g.log.completed === true);
+
+  // Sin actividad no se inventa nada.
+  const e = R.logConLectura(vacio, null, diaE, easyPace);
+  check("Sin actividad no se marca nada", e.cambio === false && e.log.completed === false);
+}
+
+console.log("\n▸ Traer lo del reloj a una pantalla que ya estaba abierta");
+{
+  const reloj = { id: 5, km: 8, ritmo: "5:22" };
+
+  // La pantalla del alumno: está escribiendo su RPE justo cuando llega la lectura.
+  const enPantalla = {
+    id: "ana",
+    weeks: { 3: { plan: [{ paceKey: "E" }, { paceKey: "I" }],
+                  log: [{ completed: true, actualKm: "8", rpe: "7" }, { completed: false }] } },
+  };
+  const fresco = {
+    id: "ana",
+    weeks: { 3: { plan: [{ paceKey: "E" }, { paceKey: "I" }],
+                  log: [{ completed: true, actualKm: "8", rpe: "", reloj }, { completed: false }],
+                  extras: [{ id: 9 }] } },
+  };
+
+  const r = R.fusionarLoDelReloj(enPantalla, fresco);
+  check("Trae el bloque del reloj", JSON.stringify(r.weeks[3].log[0].reloj) === JSON.stringify(reloj));
+  check("NO pisa el RPE a medio escribir", r.weeks[3].log[0].rpe === "7", r.weeks[3].log[0].rpe);
+  check("Trae las actividades extra", JSON.stringify(r.weeks[3].extras) === JSON.stringify([{ id: 9 }]));
+
+  // Sin novedades devuelve el MISMO objeto, para que React no repinte de balde.
+  check("Sin novedades no crea un objeto nuevo", R.fusionarLoDelReloj(r, fresco) === r);
+  check("Sin registro fresco no hace nada", R.fusionarLoDelReloj(enPantalla, null) === enPantalla);
+  check("No mezcla fichas de alumnos distintos",
+    R.fusionarLoDelReloj(enPantalla, { ...fresco, id: "otro" }) === enPantalla);
+  check("Una semana que la pantalla no tiene no se inventa",
+    R.fusionarLoDelReloj(enPantalla, { id: "ana", weeks: { 9: { log: [{ reloj }] } } }).weeks[9] === undefined);
+}
+
+// ============================================================
+// 6. ACTIVIDADES SIN SESIÓN PLANIFICADA
+// ============================================================
+console.log("\n▸ Actividades que no corresponden a ninguna sesión");
+{
+  const uno = R.resumenDeActividad({ id: 1, distance: 5000, moving_time: 1500 }, []);
+  const dos = R.resumenDeActividad({ id: 2, distance: 9000, moving_time: 2700 }, []);
+
+  let { extras, cambio } = R.conActividadExtra([], uno);
+  check("Se añade la actividad extra", extras.length === 1 && cambio === true);
+
+  ({ extras, cambio } = R.conActividadExtra(extras, dos));
+  check("Se añade una segunda", extras.length === 2 && cambio === true);
+
+  ({ extras, cambio } = R.conActividadExtra(extras, uno));
+  check("No se duplica la misma actividad", extras.length === 2 && cambio === false);
+
+  ({ extras, cambio } = R.conActividadExtra(extras, null));
+  check("Una actividad sin identificador no se guarda", extras.length === 2 && cambio === false);
+}
+
+// ============================================================
+console.log(`\n${"═".repeat(50)}`);
+console.log(`  ${passed} pruebas pasaron, ${failed} fallaron`);
+if (failures.length) {
+  console.log(`\n  Fallos:`);
+  for (const f of failures) console.log(`   ✗ ${f}`);
+}
+console.log(`${"═".repeat(50)}\n`);
+process.exit(failed ? 1 : 0);

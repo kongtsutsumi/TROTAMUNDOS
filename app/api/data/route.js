@@ -25,6 +25,20 @@ function isPureReorder(basePlan, incomingPlan) {
   return a.every((x, i) => x === b[i]);
 }
 
+// El bloque "reloj" de cada sesión —lo que trajo intervals.icu— y las actividades extra de
+// la semana los escribe el SERVIDOR, no los navegadores. Ni el alumno ni el coach pueden
+// crearlos, cambiarlos ni borrarlos: su copia de la semana puede ser de hace un rato y al
+// guardar los barrería sin querer. Siempre mandan los guardados.
+function conservarLoDelReloj(incomingLog, storedLog) {
+  return (incomingLog || []).map((entry, i) => {
+    const copia = entry && typeof entry === "object" ? { ...entry } : {};
+    const guardado = storedLog?.[i];
+    if (guardado?.reloj) copia.reloj = guardado.reloj;
+    else delete copia.reloj;
+    return copia;
+  });
+}
+
 export async function POST(request) {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
@@ -78,7 +92,7 @@ export async function POST(request) {
         if (!base) continue; // el alumno no puede crear semanas nuevas
         mergedWeeks[wkNum] = {
           ...base,
-          log: incoming.log ?? base.log,
+          log: incoming.log ? conservarLoDelReloj(incoming.log, base.log) : base.log,
           // El alumno puede REORDENAR sus días (mover una sesión a otro día), pero no alterar
           // su contenido. Se acepta el nuevo orden solo si cada día del plan entrante existe
           // igual en el plan guardado — así el reordenamiento pasa y cualquier edición no.
@@ -116,7 +130,11 @@ export async function POST(request) {
             if (storedEntry?.completed && !entry?.completed) return storedEntry;
             return entry;
           });
-          mergedWeeks[wkNum] = { ...incoming, log: mergedLog };
+          mergedWeeks[wkNum] = {
+            ...incoming,
+            log: conservarLoDelReloj(mergedLog, stored.log),
+            extras: stored.extras ?? incoming.extras,
+          };
         }
         toSave = { ...value, weeks: mergedWeeks };
       }

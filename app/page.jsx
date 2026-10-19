@@ -1,6 +1,7 @@
 "use client";
 import { safeGet, safeSet, safeDelete, safeGetWithRetry, updateRosterEntry, fetchRosterSummary, intervalsOp, safeGetPersonal, safeSetPersonal, safeDeletePersonal, authStatus, coachSetup, coachLogin, studentList, studentLogin, logout } from "../lib/storage";
 import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { fusionarLoDelReloj } from "../lib/intervals-read.mjs";
 import {
   Users, User, Plus, ArrowLeft, Check, Flag, TrendingUp, TrendingDown,
   Minus, X, ChevronRight, ChevronLeft, ChevronDown, RotateCw, Activity, Search, AlertCircle, Lock, KeyRound,
@@ -1332,7 +1333,106 @@ function ProgressChart({ student, activeWeekNum }) {
   );
 }
 
-function LapCard({ day: dayRaw, index, mode, log, onChangeDay, onChangeLog, isToday, isRaceGoal, onStartLive, onSwapDay, onMoveSession }) {
+/* ---------------------------------------------------------
+   LO QUE TRAJO EL RELOJ
+
+   Dos niveles de detalle, a propósito.
+
+   El alumno ve lo justo para reconocer su salida y entender que no tiene que escribirla:
+   kilómetros, tiempo, ritmo y pulso medio. Lo único que le queda por poner es el RPE, que
+   no lo mide ningún sensor.
+
+   El coach ve además lo que le sirve para decidir: pulso máximo, cadencia, desnivel,
+   carga, y los parciales de cada serie. Y la diferencia contra lo planificado, que es la
+   pregunta que de verdad se hace al abrir la ficha.
+
+   Lo planificado no se toca nunca: si corrió 8 donde había 5, se ven los dos números.
+--------------------------------------------------------- */
+function segundosATexto(seg) {
+  if (seg == null || !Number.isFinite(seg)) return null;
+  const m = Math.floor(seg / 60);
+  return `${m}:${String(Math.round(seg - m * 60)).padStart(2, "0")}`;
+}
+
+function DatoDelReloj({ valor, etiqueta }) {
+  if (valor == null || valor === "") return null;
+  return (
+    <span className="text-xs whitespace-nowrap" style={{ color: COLORS.textMuted }}>
+      <span style={{ color: COLORS.lane, fontFamily: "'JetBrains Mono', monospace" }}>{valor}</span>{" "}{etiqueta}
+    </span>
+  );
+}
+
+function DatosDelReloj({ reloj, day, esCoach }) {
+  const [verVueltas, setVerVueltas] = useState(false);
+  if (!reloj) return null;
+
+  const planKm = day?.km ?? null;
+  const difKm = planKm > 0 && reloj.km != null ? Math.round((reloj.km - planKm) * 10) / 10 : null;
+  const tiempo = reloj.min != null ? segundosATexto(reloj.min * 60) : null;
+
+  return (
+    <div className="mt-2 rounded-lg px-3 py-2" style={{ background: COLORS.bg, border: `1px solid ${COLORS.border}` }}>
+      <div className="flex items-center gap-2 flex-wrap mb-1">
+        <Activity size={11} style={{ color: COLORS.track }} />
+        <span className="text-[10px] uppercase tracking-wide" style={{ color: COLORS.track }}>Del reloj</span>
+        {reloj.dispositivo && <span className="text-[10px]" style={{ color: COLORS.textMuted }}>{reloj.dispositivo}</span>}
+        {reloj.via === "fecha" && (
+          <span className="text-[10px]" style={{ color: COLORS.textMuted }}
+            title="Esta actividad no venía enlazada al entrenamiento planificado; se asignó porque cayó ese día.">
+            · asignada por fecha
+          </span>
+        )}
+      </div>
+
+      <div className="flex items-center gap-x-3 gap-y-1 flex-wrap">
+        <DatoDelReloj valor={reloj.km} etiqueta="km" />
+        <DatoDelReloj valor={tiempo} etiqueta="min" />
+        <DatoDelReloj valor={reloj.ritmo} etiqueta="/km" />
+        <DatoDelReloj valor={reloj.fcMedia} etiqueta="ppm" />
+        {esCoach && (
+          <>
+            <DatoDelReloj valor={reloj.fcMax} etiqueta="ppm máx" />
+            <DatoDelReloj valor={reloj.cadencia} etiqueta="pasos/min" />
+            <DatoDelReloj valor={reloj.subida != null ? `+${reloj.subida}` : null} etiqueta="m" />
+            <DatoDelReloj valor={reloj.carga} etiqueta="carga" />
+            <DatoDelReloj valor={reloj.calorias} etiqueta="kcal" />
+          </>
+        )}
+      </div>
+
+      {difKm != null && Math.abs(difKm) >= 0.5 && (
+        <div className="text-[11px] mt-1" style={{ color: COLORS.textMuted }}>
+          {difKm > 0 ? `${difKm} km más` : `${Math.abs(difKm)} km menos`} de lo planificado ({planKm} km)
+        </div>
+      )}
+
+      {esCoach && reloj.vueltas?.length > 0 && (
+        <>
+          <button type="button" onClick={() => setVerVueltas((v) => !v)}
+            className="text-[11px] mt-1" style={{ color: COLORS.track }}>
+            {verVueltas ? "Ocultar los parciales" : `Ver los ${reloj.vueltas.length} parciales`}
+          </button>
+          {verVueltas && (
+            <div className="mt-1 space-y-0.5">
+              {reloj.vueltas.map((v, i) => (
+                <div key={i} className="flex gap-3 text-[11px]"
+                  style={{ fontFamily: "'JetBrains Mono', monospace", color: COLORS.textMuted }}>
+                  <span className="w-5 text-right">{i + 1}</span>
+                  <span className="w-16 text-right">{v.km != null ? `${v.km} km` : "—"}</span>
+                  <span className="w-14 text-right">{segundosATexto(v.seg) || "—"}</span>
+                  <span style={{ color: COLORS.lane }}>{v.ritmo ? `${v.ritmo}/km` : ""}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function LapCard({ day: dayRaw, index, mode, log, onChangeDay, onChangeLog, isToday, isRaceGoal, onStartLive, onSwapDay, onMoveSession, esCoach }) {
   // Un día puede faltar en planes guardados por versiones anteriores; se trata como descanso
   // en vez de tumbar la pantalla completa del alumno.
   const day = dayRaw || { day: DAYS[index] ?? "", type: "Descanso", paceKey: "", km: 0 };
@@ -1644,6 +1744,7 @@ function LapCard({ day: dayRaw, index, mode, log, onChangeDay, onChangeLog, isTo
           )}
           {!isRest && <div className="mt-2"><SessionBarChart day={day} /></div>}
           {!isRest && <SessionDetail segments={detail} />}
+          {!isRest && <DatosDelReloj reloj={log?.reloj} day={day} esCoach={esCoach} />}
 
           {mode === "log" && !isRest && (
             <div className="mt-3 pt-3 space-y-2" style={{ borderTop: `1px dashed ${COLORS.border}` }}>
@@ -1711,7 +1812,11 @@ function LapCard({ day: dayRaw, index, mode, log, onChangeDay, onChangeLog, isTo
                   El ritmo real es solo del {day.paceKey === "T" ? "bloque de umbral" : "bloque de series/intervalos"} — no cuentes el warm-up, cool-down ni los descansos.
                 </p>
               )}
-              <p className="text-[10px]" style={{ color: COLORS.textMuted }}>RPE = Índice de Esfuerzo Percibido.</p>
+              <p className="text-[10px]" style={{ color: COLORS.textMuted }}>
+                {log?.reloj
+                  ? "Tu reloj ya anotó los kilómetros y el ritmo. Lo único que falta es tu RPE: eso no lo mide ningún sensor."
+                  : "RPE = Índice de Esfuerzo Percibido."}
+              </p>
               {(() => {
                 const diff = paceDiffLabel(log?.actualPaceStr, getRepresentativePace(day));
                 return diff ? <div className="text-xs" style={{ color: diff.color }}>Ritmo real: {diff.text}</div> : null;
@@ -2575,6 +2680,22 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
     setPinMsg("");
     safeGetWithRetry(`student:${selectedId}`).then((s) => { if (active) { setStudent(s); setStudentLoading(false); } });
     return () => { active = false; };
+  }, [selectedId]);
+
+  // Al abrir la ficha de un alumno se trae de intervals.icu lo que haya entrenado. La
+  // fusión incorpora SOLO lo que escribe el servidor, así que no pisa nada que el coach
+  // tenga a medio editar en pantalla.
+  useEffect(() => {
+    if (!selectedId) return undefined;
+    let activo = true;
+    (async () => {
+      const r = await intervalsOp("traer", selectedId);
+      if (!activo || !(r?.actualizadas || r?.extras)) return;
+      const fresco = await safeGet(`student:${selectedId}`);
+      if (!activo || !fresco) return;
+      setStudent((previo) => fusionarLoDelReloj(previo, fresco));
+    })();
+    return () => { activo = false; };
   }, [selectedId]);
 
   useEffect(() => { if (showReports) safeGet("reports").then((r) => setReports(r || [])); }, [showReports]);
@@ -4057,7 +4178,7 @@ const resetPlan = async () => {
               )}
 
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
-                {week.plan.map((d, i) => <LapCard key={i} day={d} index={i} mode={isViewingLive ? "edit" : "view"} log={week.log[i]} onChangeDay={updateDay} onSwapDay={isViewingLive ? swapDays : undefined} />)}
+                {week.plan.map((d, i) => <LapCard key={i} day={d} index={i} mode={isViewingLive ? "edit" : "view"} log={week.log[i]} esCoach onChangeDay={updateDay} onSwapDay={isViewingLive ? swapDays : undefined} />)}
               </div>
               <div className="flex flex-wrap gap-2">
                 {isViewingLive && (
@@ -4122,10 +4243,12 @@ const resetPlan = async () => {
 /* Conectar el reloj del alumno con intervals.icu.
    Es opcional y reversible: sin esto la app funciona igual. Se dice de forma explícita qué
    se va a hacer con el permiso, porque el alumno está autorizando acceso a su cuenta. */
-function ConexionReloj({ student, onCambio }) {
+function ConexionReloj({ student, onCambio, onLectura }) {
   const [estado, setEstado] = useState(null);
   const [ocupado, setOcupado] = useState(false);
   const [confirmarCorte, setConfirmarCorte] = useState(false);
+  const [trayendo, setTrayendo] = useState(false);
+  const [avisoLectura, setAvisoLectura] = useState(null);
 
   const cargar = useCallback(async () => {
     if (!student?.id) return;
@@ -4159,6 +4282,26 @@ function ConexionReloj({ student, onCambio }) {
     setAviso({ estado: "error", motivo: r?.motivo || "no-disponible" });
     setOcupado(false);
   };
+  // "Actualizar ahora": fuerza la consulta aunque se haya hecho hace poco. El tope baja a
+  // un minuto, suficiente para que nadie martille el servicio sin querer.
+  const actualizarDesdeElReloj = async () => {
+    setTrayendo(true);
+    setAvisoLectura(null);
+    const r = await intervalsOp("traer", student.id, { forzar: true });
+    if (r?.actualizadas || r?.extras) {
+      setAvisoLectura(`Listo: ${r.actualizadas} sesión${r.actualizadas === 1 ? "" : "es"} al día.`);
+      await onLectura?.();
+    } else if (r?.motivo === "permiso-revocado") {
+      setAvisoLectura("intervals.icu ya no acepta el permiso. Volvé a conectar tu reloj.");
+    } else if (r?.ok) {
+      setAvisoLectura("No hay nada nuevo. Si acabás de entrenar, dale unos minutos a que el reloj sincronice.");
+    } else {
+      setAvisoLectura("No se pudo consultar ahora. Probá en un rato.");
+    }
+    setTrayendo(false);
+    await cargar();
+  };
+
   const desconectar = async () => {
     setOcupado(true);
     await intervalsOp("desconectar", student.id);
@@ -4195,6 +4338,15 @@ function ConexionReloj({ student, onCambio }) {
                 : ` El último envío no salió (${estado.ultimoEnvio.motivo}) — avisale a tu coach si no te aparecen.`
             )}
           </p>
+          <div className="flex flex-wrap items-center gap-2 mb-2">
+            <button type="button" onClick={actualizarDesdeElReloj} disabled={trayendo}
+              className="flex items-center gap-1 text-xs px-2 py-1 rounded"
+              style={{ background: COLORS.bg, color: COLORS.track, border: `1px solid ${COLORS.track}55`, opacity: trayendo ? 0.6 : 1 }}>
+              <RefreshCcw size={11} /> {trayendo ? "Buscando…" : "Traer lo que entrené"}
+            </button>
+            {avisoLectura && <span className="text-xs" style={{ color: COLORS.textMuted }}>{avisoLectura}</span>}
+          </div>
+
           {confirmarCorte ? (
             <div className="flex flex-wrap gap-2 items-center">
               <span className="text-xs" style={{ color: COLORS.textMuted }}>
@@ -4240,6 +4392,26 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
   const [viewedWeek, setViewedWeek] = useState(null);
 
   useEffect(() => { safeGet(`student:${studentId}`).then(setStudent); }, [studentId]);
+
+  // Trae lo del reloj a la pantalla sin recargarla entera: solo el bloque que escribe el
+  // servidor. Si el alumno está escribiendo su RPE en ese momento, no se lo pisa.
+  const aplicarLectura = useCallback(async () => {
+    const fresco = await safeGet(`student:${studentId}`);
+    if (fresco) setStudent((previo) => fusionarLoDelReloj(previo, fresco));
+  }, [studentId]);
+
+  // Al abrir, se le pide al servidor que traiga de intervals.icu lo entrenado. Si el alumno
+  // no tiene reloj conectado —o si ya se consultó hace un rato— esto no cuesta nada: el
+  // servidor contesta que no hay nada que hacer y la pantalla sigue igual.
+  useEffect(() => {
+    let activo = true;
+    (async () => {
+      const r = await intervalsOp("traer", studentId);
+      if (!activo || !(r?.actualizadas || r?.extras)) return;
+      await aplicarLectura();
+    })();
+    return () => { activo = false; };
+  }, [studentId, aplicarLectura]);
 
   // Vuelve a leer el registro desde el servidor. Lo usa la conexión del reloj, que cambia
   // el registro del lado del servidor y no por el camino normal de guardado.
@@ -4595,7 +4767,7 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
             <Download size={14} /> Descargar mi semana en PDF
           </button>
 
-          <ConexionReloj student={student} onCambio={reloadStudent} />
+          <ConexionReloj student={student} onCambio={reloadStudent} onLectura={aplicarLectura} />
 
           {canEditWeek && !waitingForCoach && (
             <>
