@@ -311,11 +311,44 @@ console.log("▸ Activación de la semana según la fecha");
   check("Lunes: ya se activa la semana preparada",
     E.getActiveLogWeek(prepared) === 2, `dio ${E.getActiveLogWeek(prepared)}`);
 
-  // Un alumno atrasado no debe perder su semana pendiente.
+  // Una semana vieja SIN ENVIAR no puede retener el presente.
+  //
+  // Antes la semana activa era "la primera sin enviar", y eso era una trampa sin salida: la
+  // semana vieja tampoco se puede enviar, porque el calendario ya la cerró y el botón
+  // desaparece. El alumno quedaba sin poder registrar nada, ni en la vieja ni en la de hoy.
   const late = mk({ 1: { submitted: false }, 2: { submitted: false } });
-  setToday("2026-08-12");
-  check("Alumno atrasado sigue en su semana pendiente",
-    E.getActiveLogWeek(late) === 1, `dio ${E.getActiveLogWeek(late)}`);
+  setToday("2026-08-12"); // martes de la semana 2
+  check("Una semana pasada sin enviar no retiene al alumno",
+    E.getActiveLogWeek(late) === 2, `dio ${E.getActiveLogWeek(late)}`);
+
+  // El caso real que lo destapó: la semana de carrera quedó sin enviar y, tres semanas
+  // después, el alumno seguía sin poder marcar nada.
+  const atrapado = mk({
+    18: { submitted: false }, 19: { submitted: false },
+    20: { submitted: false }, 21: { submitted: false }, 22: { submitted: false },
+  });
+  atrapado.planStartMonday = "2026-05-18"; // la semana 22 cae en el 12/10
+  setToday("2026-10-19");                   // lunes de la semana 23
+  const activa = E.getActiveLogWeek(atrapado);
+  check("Tres semanas sin enviar no dejan al alumno atrapado", activa === 22, `dio ${activa}`);
+  check("La semana activa es una que existe de verdad", !!atrapado.weeks[activa]);
+  // Con la semana activa en su sitio, la pantalla deja registrar: ni vista previa ni cerrada.
+  const hoyNum = E.getTodayWeekNum(atrapado);
+  check("La semana activa no queda marcada como vista previa", !(activa > hoyNum), `activa ${activa}, hoy ${hoyNum}`);
+  check("La semana activa no queda marcada como finalizada",
+    !(activa < hoyNum) || activa === 22, `activa ${activa}, hoy ${hoyNum}`);
+
+  // Si el plan no llega hasta hoy, se queda en la última que exista (esperando al coach).
+  const sinPreparar = mk({ 1: { submitted: true }, 2: { submitted: true } });
+  setToday("2026-08-24"); // semana 4, pero solo hay hasta la 2
+  check("Si el coach no preparó más, se queda en la última que existe",
+    E.getActiveLogWeek(sinPreparar) === 2, `dio ${E.getActiveLogWeek(sinPreparar)}`);
+
+  // Un hueco en el historial no debe devolver una semana inexistente.
+  const conHueco = mk({ 1: { submitted: true }, 4: { submitted: false } });
+  setToday("2026-08-17"); // semana 3, que no existe
+  const h = E.getActiveLogWeek(conHueco);
+  check("Un hueco en el historial no devuelve una semana que no existe", !!conHueco.weeks[h], `dio ${h}`);
 
   // Con varias semanas preparadas por adelantado, tampoco debe saltar.
   const ahead = mk({ 1: { submitted: true }, 2: { submitted: true }, 3: { submitted: false } });
