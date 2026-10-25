@@ -1,3 +1,47 @@
+/* Las fuentes y los estilos globales viven acá, no en un <style> dentro de la página.
+   Antes estaban en un <style> de app/page.jsx, y el servidor y el navegador escribían sus
+   comillas de forma distinta: React lo detectaba como discrepancia, tiraba el HTML del
+   servidor y volvía a pintar toda la app desde cero al abrirla. */
+@import url("https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* El fondo oscuro también detrás de la página: al estirar la pantalla en el iPhone, o
+   mientras carga, no aparece un destello blanco. */
+html,
+body {
+  background: #12151b;
+}
+
+body {
+  /* Que un toque no deje el recuadro gris de los navegadores móviles: en una app no está. */
+  -webkit-tap-highlight-color: transparent;
+}
+
+* {
+  font-family: "Inter", sans-serif;
+}
+
+@keyframes fadein {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes screenFlashPulse {
+  0% { opacity: 0.85; }
+  100% { opacity: 0; }
+}
+.animate-fadein { animation: fadein 0.25s ease-out; }
+
+/* El mismo rojo de la app (COLORS.track). */
+input:focus,
+select:focus,
+button:focus-visible {
+  outline: 2px solid #c8452e;
+  outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fadein { animation: none; }
+}

@@ -1,11 +1,11 @@
 "use client";
 import { safeGet, safeSet, safeDelete, safeGetWithRetry, updateRosterEntry, fetchRosterSummary, intervalsOp, safeGetPersonal, safeSetPersonal, safeDeletePersonal, authStatus, coachSetup, coachLogin, studentList, studentLogin, logout } from "../lib/storage";
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { fusionarLoDelReloj } from "../lib/intervals-read.mjs";
+import { fusionarLoDelReloj, extrasDelDia, kmAdicionalesDe } from "../lib/intervals-read.mjs";
 import {
   Users, User, Plus, ArrowLeft, Check, Flag, TrendingUp, TrendingDown,
   Minus, X, ChevronRight, ChevronLeft, ChevronDown, RotateCw, Activity, Search, AlertCircle, Lock, KeyRound,
-  FileText, RefreshCcw, Trash2, BarChart2, Clock, Edit3, Download, QrCode
+  FileText, RefreshCcw, Trash2, BarChart2, Clock, Edit3, Download, QrCode, CalendarDays, Watch, LogOut
 } from "lucide-react";
 import {
   applyIntermediateRaceDayPatch,
@@ -227,9 +227,18 @@ function buildWeeklyReportData(student, weekRaw, weekNum) {
   if (notes.length) {
     conclusions.push("Revisa las notas que dejó el alumno en sus sesiones — pueden dar contexto directo sobre cómo se sintió.");
   }
+  // Lo que corrió por fuera del plan no entra en el cumplimiento (no eran sesiones
+  // planificadas), pero sí en la carga real de la semana: es lo que el coach necesita
+  // ver para detectar a quien se está pasando de volumen por su cuenta.
+  const kmAdicionales = kmAdicionalesDe(week);
+  const salidasAdicionales = Array.isArray(week?.extras) ? week.extras.length : 0;
+  if (salidasAdicionales > 0) {
+    const total = Math.round((kmActual + kmAdicionales) * 10) / 10;
+    conclusions.push(`Además del plan, el reloj registró ${salidasAdicionales} salida${salidasAdicionales === 1 ? "" : "s"} adicional${salidasAdicionales === 1 ? "" : "es"} (${kmAdicionales} km). Con eso, la carga real de la semana fue de ${total} km.`);
+  }
   if (conclusions.length === 0) conclusions.push("Sin datos suficientes esta semana para sacar conclusiones claras — revisa directamente el detalle de cada sesión.");
 
-  return { daysPlanned, daysCompleted, kmPlanned, kmActual, avgRpe, paceComparisons, notes, conclusions, adherencePct, kmPct };
+  return { daysPlanned, daysCompleted, kmPlanned, kmActual, kmAdicionales, salidasAdicionales, avgRpe, paceComparisons, notes, conclusions, adherencePct, kmPct };
 }
 const COLOR_KIND_HEX = { easy: "#4C9A6A", recovery: "#4A5568", moderate: "#D99A3D", hard: "#C8452E" };
 function buildSessionBarSVG(day) {
@@ -336,7 +345,7 @@ function buildWeeklyReportHTML(student, week, weekNum) {
     </p>
     <div style="border-top:1px solid #ddd;border-bottom:1px solid #ddd;padding:8px 0;margin-bottom:16px;">
       <div class="stat"><b>${r.daysCompleted}/${r.daysPlanned}</b><span>días entrenados (${pct(r.adherencePct)})</span></div>
-      <div class="stat"><b>${r.kmActual} km</b><span>de ${r.kmPlanned} km planeados (${pct(r.kmPct)})</span></div>
+      <div class="stat"><b>${r.kmActual} km</b><span>de ${r.kmPlanned} km planeados (${pct(r.kmPct)})${r.kmAdicionales ? ` · +${r.kmAdicionales} km fuera del plan` : ""}</span></div>
       <div class="stat"><b>${r.avgRpe != null ? r.avgRpe : "—"}</b><span>RPE promedio (de 10)</span></div>
     </div>
     ${r.paceComparisons.length ? `
@@ -1363,7 +1372,7 @@ function DatoDelReloj({ valor, etiqueta }) {
   );
 }
 
-function DatosDelReloj({ reloj, day, esCoach }) {
+function DatosDelReloj({ reloj, day, esCoach, titulo = "Del reloj" }) {
   const [verVueltas, setVerVueltas] = useState(false);
   if (!reloj) return null;
 
@@ -1375,7 +1384,7 @@ function DatosDelReloj({ reloj, day, esCoach }) {
     <div className="mt-2 rounded-lg px-3 py-2" style={{ background: COLORS.bg, border: `1px solid ${COLORS.border}` }}>
       <div className="flex items-center gap-2 flex-wrap mb-1">
         <Activity size={11} style={{ color: COLORS.track }} />
-        <span className="text-[10px] uppercase tracking-wide" style={{ color: COLORS.track }}>Del reloj</span>
+        <span className="text-[10px] uppercase tracking-wide" style={{ color: COLORS.track }}>{titulo}</span>
         {reloj.dispositivo && <span className="text-[10px]" style={{ color: COLORS.textMuted }}>{reloj.dispositivo}</span>}
         {reloj.via === "fecha" && (
           <span className="text-[10px]" style={{ color: COLORS.textMuted }}
@@ -1432,7 +1441,32 @@ function DatosDelReloj({ reloj, day, esCoach }) {
   );
 }
 
-function LapCard({ day: dayRaw, index, mode, log, onChangeDay, onChangeLog, isToday, isRaceGoal, onStartLive, onSwapDay, onMoveSession, esCoach }) {
+/* ---------------------------------------------------------
+   SALIDAS ADICIONALES
+
+   Lo que el alumno corrió ese día además de su sesión: una segunda salida, un trote
+   suelto, o una salida en un día de descanso. Se ve en la tarjeta de ese día —también en
+   los de descanso— con el mismo detalle que la sesión. No se compara con lo planificado,
+   porque no había nada planificado con qué compararla.
+--------------------------------------------------------- */
+function horaDe(fecha) {
+  const m = /T(\d{2}):(\d{2})/.exec(String(fecha || ""));
+  return m ? `${m[1]}:${m[2]}` : null;
+}
+
+function SalidasAdicionales({ extras, esCoach }) {
+  if (!Array.isArray(extras) || !extras.length) return null;
+  return (
+    <div className="mt-2 space-y-2">
+      {extras.map((e, i) => (
+        <DatosDelReloj key={e.id ?? i} reloj={e} day={null} esCoach={esCoach}
+          titulo={`Salida adicional${horaDe(e.fecha) ? ` · ${horaDe(e.fecha)}` : ""}`} />
+      ))}
+    </div>
+  );
+}
+
+function LapCard({ day: dayRaw, index, mode, log, onChangeDay, onChangeLog, isToday, isRaceGoal, onStartLive, onSwapDay, onMoveSession, esCoach, extras }) {
   // Un día puede faltar en planes guardados por versiones anteriores; se trata como descanso
   // en vez de tumbar la pantalla completa del alumno.
   const day = dayRaw || { day: DAYS[index] ?? "", type: "Descanso", paceKey: "", km: 0 };
@@ -1745,6 +1779,7 @@ function LapCard({ day: dayRaw, index, mode, log, onChangeDay, onChangeLog, isTo
           {!isRest && <div className="mt-2"><SessionBarChart day={day} /></div>}
           {!isRest && <SessionDetail segments={detail} />}
           {!isRest && <DatosDelReloj reloj={log?.reloj} day={day} esCoach={esCoach} />}
+          <SalidasAdicionales extras={extras} esCoach={esCoach} />
 
           {mode === "log" && !isRest && (
             <div className="mt-3 pt-3 space-y-2" style={{ borderTop: `1px dashed ${COLORS.border}` }}>
@@ -4178,7 +4213,7 @@ const resetPlan = async () => {
               )}
 
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
-                {week.plan.map((d, i) => <LapCard key={i} day={d} index={i} mode={isViewingLive ? "edit" : "view"} log={week.log[i]} esCoach onChangeDay={updateDay} onSwapDay={isViewingLive ? swapDays : undefined} />)}
+                {week.plan.map((d, i) => <LapCard key={i} day={d} index={i} mode={isViewingLive ? "edit" : "view"} log={week.log[i]} esCoach extras={extrasDelDia(week, i, student, activeWeekNum)} onChangeDay={updateDay} onSwapDay={isViewingLive ? swapDays : undefined} />)}
               </div>
               <div className="flex flex-wrap gap-2">
                 {isViewingLive && (
@@ -4270,10 +4305,22 @@ function ConexionReloj({ student, onCambio, onLectura }) {
     if (r === "conectado") { cargar(); onCambio?.(); }
   }, [cargar, onCambio]);
 
-  if (!estado) return null;
-  // Si la conexión no está configurada en el servidor, no se le enseña al alumno un botón
-  // que no lleva a ninguna parte.
-  if (!estado.disponible && !estado.conectado) return null;
+  // Ahora el reloj tiene su propia pestaña: si esto no pintara nada, el alumno vería una
+  // pantalla en blanco. Mientras carga se dice, y si la conexión no está disponible en el
+  // servidor se explica en vez de enseñar un botón que no lleva a ninguna parte.
+  if (!estado) {
+    return <p className="text-sm" style={{ color: COLORS.textMuted }}>Consultando tu reloj…</p>;
+  }
+  if (!estado.disponible && !estado.conectado) {
+    return (
+      <div className="rounded-xl p-4" style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}` }}>
+        <p className="text-sm" style={{ color: COLORS.textMuted }}>
+          La conexión con relojes no está disponible en este momento. Tus entrenamientos siguen acá como siempre; si
+          la necesitás, avisale a tu coach.
+        </p>
+      </div>
+    );
+  }
 
   const conectar = async () => {
     setOcupado(true);
@@ -4383,6 +4430,14 @@ function ConexionReloj({ student, onCambio, onLectura }) {
   );
 }
 
+// Las cuatro pestañas de la barra inferior del alumno.
+const PESTANAS_ALUMNO = [
+  { id: "semana", etiqueta: "Semana", Icono: CalendarDays },
+  { id: "progreso", etiqueta: "Progreso", Icono: BarChart2 },
+  { id: "reloj", etiqueta: "Reloj", Icono: Watch },
+  { id: "perfil", etiqueta: "Perfil", Icono: User },
+];
+
 function StudentPortal({ studentId, refreshRoster, onBack }) {
   const [student, setStudent] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -4390,6 +4445,20 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
   const [saving, setSaving] = useState(false);
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
   const [viewedWeek, setViewedWeek] = useState(null);
+
+  // Pestaña activa de la barra inferior. Al cambiar de pestaña se vuelve arriba, como en
+  // cualquier app: si no, se aterriza a media página de la sección anterior.
+  const [pestana, setPestana] = useState("semana");
+  const irA = useCallback((p) => {
+    setPestana(p);
+    if (typeof window !== "undefined") window.scrollTo({ top: 0 });
+  }, []);
+  // Al volver de autorizar el reloj, la dirección trae "?reloj=…". El aviso lo muestra el
+  // panel del reloj, así que hay que abrir esa pestaña o el alumno no lo vería nunca.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (new URLSearchParams(window.location.search).has("reloj")) setPestana("reloj");
+  }, []);
 
   useEffect(() => { safeGet(`student:${studentId}`).then(setStudent); }, [studentId]);
 
@@ -4592,21 +4661,20 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
   };
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-6">
-      <div className="flex items-center gap-3 mb-6">
-        <button onClick={onBack} className="p-2 rounded-lg" style={{ color: COLORS.textMuted }}><ArrowLeft size={18} /></button>
-        <User size={20} style={{ color: COLORS.track }} />
-        <h1 className="text-xl font-semibold tracking-wide flex-1" style={{ fontFamily: "'Oswald', sans-serif", color: COLORS.textPrimary }}>
-          MI PLAN{student ? <span style={{ color: COLORS.track }}> · {student.name}</span> : null}
-        </h1>
-        <button onClick={async () => { await safeDeletePersonal("rememberedStudent"); onBack(); }} className="text-xs underline" style={{ color: COLORS.textMuted }}>
-          No soy yo
-        </button>
-      </div>
+    <div className="max-w-4xl mx-auto px-4" style={{ paddingBottom: "calc(6rem + env(safe-area-inset-bottom))" }}>
+      {/* Cabecera fija con el logo. Respeta la zona de la hora y la batería del teléfono
+          cuando la app se abre desde la pantalla de inicio. */}
+      <header className="sticky top-0 z-30 -mx-4 px-4 mb-4 flex items-center justify-between gap-3"
+        style={{ background: COLORS.bg, paddingTop: "calc(0.75rem + env(safe-area-inset-top))", paddingBottom: "0.75rem", borderBottom: `1px solid ${COLORS.border}` }}>
+        <img src="/logo.png" alt="Trotamundos" style={{ height: 26, width: "auto" }} />
+        {student && (
+          <span className="text-sm truncate" style={{ color: COLORS.textMuted, maxWidth: "50%" }}>{student.name}</span>
+        )}
+      </header>
 
       {!student && <p className="text-sm" style={{ color: COLORS.textMuted }}>Cargando…</p>}
 
-      {needsYesterdayConfirm && (
+      {pestana === "semana" && needsYesterdayConfirm && (
         <div className="rounded-xl p-4 mb-4" style={{ background: COLORS.moderate + "18", border: `1px solid ${COLORS.moderate}55` }}>
           <p className="text-sm font-semibold mb-1" style={{ color: COLORS.textPrimary }}>
             ¿Completaste tu sesión de {DAYS[yesterdayIdx]}?
@@ -4627,7 +4695,7 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
         </div>
       )}
 
-      {student && week && (
+      {student && week && pestana === "semana" && (
         <div>
           <div className="rounded-xl p-4 mb-4 flex items-center justify-between flex-wrap gap-3"
             style={{ background: COLORS.surface2, border: `1px solid ${COLORS.track}` }}>
@@ -4662,7 +4730,6 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
             </div>
           </div>
 
-          <div className="mb-4"><ProgressChart student={student} activeWeekNum={activeWeekNum} /></div>
 
           {/* Semana que la app publicó sola. El alumno la entrena con normalidad; solo se
               le avisa que el coach todavía puede retocarla, para que no se sorprenda si
@@ -4746,7 +4813,7 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
           )}
 
           <div className="grid sm:grid-cols-2 gap-3 mb-4">
-            {week.plan.map((d, i) => <LapCard key={i} day={d} index={i} mode={canEditWeek && !waitingForCoach ? "log" : "view"} log={week.log[i]} onChangeLog={canEditWeek ? changeLog : undefined} isToday={canEditWeek && i === todayDowIndex} isRaceGoal={!isFitnessGoal(student.goal)} onStartLive={canEditWeek && !waitingForCoach ? (idx) => setLiveTrainingDayIdx(idx) : undefined} onMoveSession={canMoveSessions ? moveHelper : undefined} />)}
+            {week.plan.map((d, i) => <LapCard key={i} day={d} index={i} mode={canEditWeek && !waitingForCoach ? "log" : "view"} log={week.log[i]} extras={extrasDelDia(week, i, student, activeWeekNum)} onChangeLog={canEditWeek ? changeLog : undefined} isToday={canEditWeek && i === todayDowIndex} isRaceGoal={!isFitnessGoal(student.goal)} onStartLive={canEditWeek && !waitingForCoach ? (idx) => setLiveTrainingDayIdx(idx) : undefined} onMoveSession={canMoveSessions ? moveHelper : undefined} />)}
           </div>
 
           {liveTrainingDayIdx != null && week.plan[liveTrainingDayIdx] && (
@@ -4767,7 +4834,6 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
             <Download size={14} /> Descargar mi semana en PDF
           </button>
 
-          <ConexionReloj student={student} onCambio={reloadStudent} onLectura={aplicarLectura} />
 
           {canEditWeek && !waitingForCoach && (
             <>
@@ -4812,6 +4878,78 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
           )}
         </div>
       )}
+
+      {student && pestana === "progreso" && (
+        <div className="space-y-4">
+          <h2 className="text-lg font-semibold" style={{ fontFamily: "'Oswald', sans-serif", color: COLORS.textPrimary }}>Tu progreso</h2>
+          <ProgressChart student={student} activeWeekNum={activeWeekNum} />
+        </div>
+      )}
+
+      {student && pestana === "reloj" && (
+        <div className="space-y-4">
+          <h2 className="text-lg font-semibold" style={{ fontFamily: "'Oswald', sans-serif", color: COLORS.textPrimary }}>Tu reloj</h2>
+          <p className="text-sm" style={{ color: COLORS.textMuted }}>
+            Conectado a intervals.icu, tus entrenamientos te llegan solos al reloj, y lo que corras vuelve solo a tu plan.
+            Solo te queda poner el RPE.
+          </p>
+          <ConexionReloj student={student} onCambio={reloadStudent} onLectura={aplicarLectura} />
+        </div>
+      )}
+
+      {student && pestana === "perfil" && (
+        <div className="space-y-3">
+          <div className="rounded-xl p-4" style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}` }}>
+            <div className="text-[10px] uppercase tracking-widest mb-1" style={{ color: COLORS.textMuted }}>Alumno</div>
+            <div className="text-2xl font-semibold" style={{ fontFamily: "'Oswald', sans-serif", color: COLORS.textPrimary }}>{student.name}</div>
+            <div className="flex flex-wrap gap-2 mt-3">
+              <Pill color={COLORS.lane}>{GOAL_LABEL[student.goal]}</Pill>
+              {student.raceDate && (
+                <Pill color={COLORS.track}>Carrera: {String(student.raceDate).slice(0, 10).split("-").reverse().join("/")}</Pill>
+              )}
+            </div>
+          </div>
+          {week && (
+            <button onClick={() => exportWeekToPDF(student, week, activeWeekNum)}
+              className="w-full flex items-center gap-2 px-4 py-3 rounded-xl text-sm font-semibold"
+              style={{ background: COLORS.surface, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
+              <Download size={16} /> Descargar mi semana en PDF
+            </button>
+          )}
+          <button onClick={onBack}
+            className="w-full flex items-center gap-2 px-4 py-3 rounded-xl text-sm"
+            style={{ background: COLORS.surface, color: COLORS.textMuted, border: `1px solid ${COLORS.border}` }}>
+            <ArrowLeft size={16} /> Volver al inicio
+          </button>
+          <button onClick={async () => { await safeDeletePersonal("rememberedStudent"); onBack(); }}
+            className="w-full flex items-center gap-2 px-4 py-3 rounded-xl text-sm"
+            style={{ background: COLORS.surface, color: COLORS.textMuted, border: `1px solid ${COLORS.border}` }}>
+            <LogOut size={16} /> No soy {student.name} — cambiar de alumno
+          </button>
+        </div>
+      )}
+
+      {/* Barra fija inferior. Se oculta durante el entrenamiento en vivo, que ocupa la
+          pantalla entera. El relleno inferior la levanta por encima de la línea de inicio
+          del iPhone. */}
+      {student && liveTrainingDayIdx == null && (
+        <nav className="fixed bottom-0 inset-x-0 z-40"
+          style={{ background: COLORS.surface, borderTop: `1px solid ${COLORS.border}`, paddingBottom: "env(safe-area-inset-bottom)" }}>
+          <div className="max-w-4xl mx-auto grid grid-cols-4">
+            {PESTANAS_ALUMNO.map(({ id, etiqueta, Icono }) => {
+              const activa = pestana === id;
+              return (
+                <button key={id} type="button" onClick={() => irA(id)} aria-current={activa ? "page" : undefined}
+                  className="flex flex-col items-center justify-center gap-1 py-2 text-[11px] font-medium"
+                  style={{ color: activa ? COLORS.track : COLORS.textMuted, minHeight: 58 }}>
+                  <Icono size={22} strokeWidth={activa ? 2.4 : 1.8} />
+                  {etiqueta}
+                </button>
+              );
+            })}
+          </div>
+        </nav>
+      )}
     </div>
   );
 }
@@ -4823,7 +4961,7 @@ function RoleSelect({ onSelect }) {
   return (
     <div className="max-w-2xl mx-auto px-4 py-16">
       <div className="text-center mb-12">
-        <div className="text-5xl font-bold tracking-widest" style={{ fontFamily: "'Oswald', sans-serif", color: COLORS.lane, letterSpacing: "0.06em" }}>TROTAMUNDOS</div>
+        <img src="/logo.png" alt="Trotamundos" className="mx-auto" style={{ width: "min(320px, 80vw)", height: "auto" }} />
         <div className="text-sm font-semibold tracking-[0.3em] uppercase mt-1" style={{ color: COLORS.track }}>el app · V.04</div>
         <div className="w-16 h-1 mx-auto mt-3 mb-4" style={{ background: COLORS.track }} />
         <p className="text-sm" style={{ color: COLORS.textMuted }}>Tú cumples el plan, tu coach lo diseña semana a semana.</p>
@@ -4875,16 +5013,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen w-full" style={{ background: COLORS.bg }}>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap');
-        * { font-family: 'Inter', sans-serif; }
-        @keyframes fadein { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
-        @keyframes screenFlashPulse { 0% { opacity: 0.85; } 100% { opacity: 0; } }
-        .animate-fadein { animation: fadein 0.25s ease-out; }
-        input:focus, select:focus, button:focus-visible { outline: 2px solid ${COLORS.track}; outline-offset: 1px; }
-        @media (prefers-reduced-motion: reduce) { .animate-fadein { animation: none; } }
-      `}</style>
-
       {loading ? (
         <div className="flex items-center justify-center h-64" style={{ color: COLORS.textMuted }}>Cargando…</div>
       ) : view === "select" ? (

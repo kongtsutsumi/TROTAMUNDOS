@@ -346,6 +346,118 @@ console.log("\n▸ Actividades que no corresponden a ninguna sesión");
   check("Una actividad sin identificador no se guarda", extras.length === 2 && cambio === false);
 }
 
+
+console.log("\n▸ Varias salidas en un mismo día");
+{
+  const alumno = {
+    id: "ana",
+    planStartMonday: "2026-10-19",
+    weeks: {
+      1: {
+        plan: [{ paceKey: "E", km: 8 }, { paceKey: null }, { paceKey: "I", km: 12 },
+               { paceKey: null }, { paceKey: "E", km: 6 }, { paceKey: null }, { paceKey: "long", km: 18 }],
+        log: [{}, {}, {}, {}, {}, {}, {}],
+      },
+    },
+  };
+
+  const act = (id, fecha, km) => ({ id, fecha, km });
+  const enSitio = (semana, dia, via) => ({ semana, dia, via });
+
+  // --- Dos salidas sueltas el mismo día ---
+  {
+    const items = [
+      { resumen: act(2, "2026-10-19T18:30:00", 6), sitio: enSitio(1, 0, "fecha") },
+      { resumen: act(1, "2026-10-19T07:00:00", 8), sitio: enSitio(1, 0, "fecha") },
+    ];
+    const { alPlan, adicionales } = R.repartirActividades(items, alumno);
+    check("Solo una se queda con la sesión", alPlan.length === 1, `fueron ${alPlan.length}`);
+    check("Se queda la PRIMERA del día", alPlan[0]?.resumen.id === 1, `se quedó la ${alPlan[0]?.resumen.id}`);
+    check("La otra queda como salida adicional", adicionales.length === 1 && adicionales[0]?.resumen.id === 2);
+    check("Y conserva el día que le toca", adicionales[0]?.dia === 0 && adicionales[0]?.semana === 1);
+  }
+
+  // --- La enlazada al plan manda, aunque sea la segunda del día ---
+  {
+    const items = [
+      { resumen: act(1, "2026-10-19T07:00:00", 4), sitio: enSitio(1, 0, "fecha") },
+      { resumen: act(2, "2026-10-19T19:00:00", 8), sitio: enSitio(1, 0, "evento") },
+    ];
+    const { alPlan, adicionales } = R.repartirActividades(items, alumno);
+    check("El enlace exacto gana a la hora", alPlan[0]?.resumen.id === 2, `se quedó la ${alPlan[0]?.resumen.id}`);
+    check("La de la mañana pasa a adicional", adicionales.length === 1 && adicionales[0]?.resumen.id === 1);
+  }
+
+  // --- Tres el mismo día ---
+  {
+    const items = [
+      { resumen: act(1, "2026-10-19T06:00:00", 5), sitio: enSitio(1, 0, "fecha") },
+      { resumen: act(2, "2026-10-19T12:00:00", 3), sitio: enSitio(1, 0, "fecha") },
+      { resumen: act(3, "2026-10-19T20:00:00", 4), sitio: enSitio(1, 0, "fecha") },
+    ];
+    const { alPlan, adicionales } = R.repartirActividades(items, alumno);
+    check("Con tres salidas, una a la sesión y dos adicionales",
+      alPlan.length === 1 && adicionales.length === 2, `${alPlan.length} y ${adicionales.length}`);
+    check("Ninguna se pierde",
+      new Set([alPlan[0]?.resumen.id, ...adicionales.map((a) => a.resumen.id)]).size === 3);
+  }
+
+  // --- Días distintos no se estorban ---
+  {
+    const items = [
+      { resumen: act(1, "2026-10-19T07:00:00", 8), sitio: enSitio(1, 0, "evento") },
+      { resumen: act(2, "2026-10-21T07:00:00", 12), sitio: enSitio(1, 2, "evento") },
+    ];
+    const { alPlan, adicionales } = R.repartirActividades(items, alumno);
+    check("Dos días, dos sesiones, ninguna adicional",
+      alPlan.length === 2 && adicionales.length === 0);
+  }
+
+  // --- Sin casilla: día de descanso, o sesión ya marcada ---
+  {
+    const items = [{ resumen: act(9, "2026-10-20T07:00:00", 5), sitio: null }];
+    const { alPlan, adicionales } = R.repartirActividades(items, alumno);
+    check("Una salida en día de descanso no toca el plan", alPlan.length === 0);
+    check("Pero se guarda como adicional, en su día",
+      adicionales.length === 1 && adicionales[0]?.semana === 1 && adicionales[0]?.dia === 1,
+      JSON.stringify(adicionales[0]));
+  }
+
+  // --- Antes de que empezara el plan: se descarta ---
+  {
+    const items = [{ resumen: act(9, "2026-10-01T07:00:00", 5), sitio: null }];
+    const { alPlan, adicionales } = R.repartirActividades(items, alumno);
+    check("Lo anterior al plan no se guarda", alPlan.length === 0 && adicionales.length === 0);
+  }
+
+  check("Sin actividades no se cae",
+    JSON.stringify(R.repartirActividades([], alumno)) === '{"alPlan":[],"adicionales":[]}');
+  check("Sin lista tampoco",
+    JSON.stringify(R.repartirActividades(null, alumno)) === '{"alPlan":[],"adicionales":[]}');
+}
+
+console.log("\n▸ Leer las salidas adicionales de cada día");
+{
+  const alumno = { id: "ana", planStartMonday: "2026-10-19" };
+  const week = {
+    extras: [
+      { id: 1, km: 5, dia: 0, fecha: "2026-10-19T18:00:00" },
+      { id: 2, km: 3, dia: 2, fecha: "2026-10-21T18:00:00" },
+      { id: 3, km: 7, fecha: "2026-10-19T20:00:00" }, // guardada por una versión anterior
+    ],
+  };
+
+  check("Encuentra las del lunes, con día guardado y sin él",
+    R.extrasDelDia(week, 0, alumno, 1).length === 2,
+    String(R.extrasDelDia(week, 0, alumno, 1).length));
+  check("Y la del miércoles", R.extrasDelDia(week, 2, alumno, 1).length === 1);
+  check("Un día sin adicionales devuelve lista vacía", R.extrasDelDia(week, 5, alumno, 1).length === 0);
+  check("Una semana sin adicionales tampoco se cae", R.extrasDelDia({}, 0, alumno, 1).length === 0);
+
+  check("Suma los kilómetros de más de la semana", R.kmAdicionalesDe(week) === 15, String(R.kmAdicionalesDe(week)));
+  check("Sin adicionales, cero", R.kmAdicionalesDe({}) === 0);
+}
+
 // ============================================================
 console.log(`\n${"═".repeat(50)}`);
 console.log(`  ${passed} pruebas pasaron, ${failed} fallaron`);
