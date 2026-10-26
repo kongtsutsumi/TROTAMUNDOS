@@ -2720,7 +2720,7 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
   const [showKmSummary, setShowKmSummary] = useState(false);
   const [reportWeekNum, setReportWeekNum] = useState(null);
   const [kmGroupBy, setKmGroupBy] = useState("week");
-  const [qrUrl, setQrUrl] = useState("https://trotamundos-seven.vercel.app");
+  const [qrUrl, setQrUrl] = useState("https://app.trotamundos.pe");
   const [paceAlerts, setPaceAlerts] = useState([]);
   const [showPanorama, setShowPanorama] = useState(false);
   const [showRitmos, setShowRitmos] = useState(false);
