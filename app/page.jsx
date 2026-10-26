@@ -1,11 +1,11 @@
 "use client";
-import { safeGet, safeSet, safeDelete, safeGetWithRetry, updateRosterEntry, fetchRosterSummary, intervalsOp, safeGetPersonal, safeSetPersonal, safeDeletePersonal, authStatus, coachSetup, coachLogin, studentList, studentLogin, logout } from "../lib/storage";
+import { safeGet, safeSet, safeDelete, safeGetWithRetry, updateRosterEntry, fetchRosterSummary, intervalsOp, muroOp, safeGetPersonal, safeSetPersonal, safeDeletePersonal, authStatus, coachSetup, coachLogin, studentList, studentLogin, logout } from "../lib/storage";
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { fusionarLoDelReloj, extrasDelDia, kmAdicionalesDe } from "../lib/intervals-read.mjs";
 import {
   Users, User, Plus, ArrowLeft, Check, Flag, TrendingUp, TrendingDown,
   Minus, X, ChevronRight, ChevronLeft, ChevronDown, RotateCw, Activity, Search, AlertCircle, Lock, KeyRound,
-  FileText, RefreshCcw, Trash2, BarChart2, Clock, Edit3, Download, QrCode, CalendarDays, Watch, LogOut
+  FileText, RefreshCcw, Trash2, BarChart2, Clock, Edit3, Download, QrCode, CalendarDays, Watch, LogOut, Megaphone, Pin, Send, Link2
 } from "lucide-react";
 import {
   applyIntermediateRaceDayPatch,
@@ -2702,6 +2702,18 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
   const [newPin, setNewPin] = useState("");
   const [pinMsg, setPinMsg] = useState("");
   const [showReports, setShowReports] = useState(false);
+  const [showMuro, setShowMuro] = useState(false);
+  const [pendientesMuro, setPendientesMuro] = useState(0);
+  useEffect(() => {
+    let vivo = true;
+    const mirar = async () => {
+      const r = await muroOp("pendientes");
+      if (vivo && r?.ok) setPendientesMuro(r.noLeidos || 0);
+    };
+    mirar();
+    const t = setInterval(mirar, 60000);
+    return () => { vivo = false; clearInterval(t); };
+  }, []);
   const [reports, setReports] = useState([]);
   const [showPaceAlerts, setShowPaceAlerts] = useState(false);
   const [showQR, setShowQR] = useState(false);
@@ -3516,7 +3528,25 @@ const resetPlan = async () => {
           style={{ background: showReports ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
           <FileText size={14} /> Reportes
         </button>
+        <button onClick={() => setShowMuro((v) => !v)}
+          className="relative flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold"
+          style={{ background: showMuro ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
+          <Megaphone size={14} /> Anuncios
+          {pendientesMuro > 0 && (
+            <span className="absolute -top-1.5 -right-1.5 rounded-full text-[10px] font-bold flex items-center justify-center"
+              style={{ width: 18, height: 18, background: COLORS.track, color: COLORS.lane }}>
+              {pendientesMuro}
+            </span>
+          )}
+        </button>
       </div>
+
+      {showMuro && (
+        <div className="mb-6">
+          <div className="text-sm font-semibold mb-3" style={{ color: COLORS.textPrimary, fontFamily: "'Oswald', sans-serif" }}>ANUNCIOS</div>
+          <MuroAnuncios esCoach onLeido={() => setPendientesMuro(0)} />
+        </div>
+      )}
 
       {showQR && (
         <div className="rounded-xl p-4 mb-6" style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}` }}>
@@ -4494,11 +4524,261 @@ function ConexionReloj({ student, onCambio, onLectura }) {
   );
 }
 
-// Las cuatro pestañas de la barra inferior del alumno.
+/* ---------------------------------------------------------
+   ANUNCIOS — el muro del grupo
+
+   Lo usan el coach y los alumnos, con la misma pantalla. Lo que cambia según quién sea
+   (quién publica anuncios, quién puede borrar qué, quién ve las lecturas) lo decide el
+   servidor con lib/muro.mjs: esta pantalla solo muestra lo que le llega.
+
+   Al abrirlo, primero se carga y recién después se marca como leído: así lo nuevo de esta
+   visita se ve resaltado, y el punto rojo se apaga.
+--------------------------------------------------------- */
+function cuandoFue(iso) {
+  const t = Date.parse(iso || "");
+  if (!Number.isFinite(t)) return "";
+  const seg = Math.max(0, (Date.now() - t) / 1000);
+  if (seg < 60) return "recién";
+  if (seg < 3600) return `hace ${Math.floor(seg / 60)} min`;
+  if (seg < 86400) return `hace ${Math.floor(seg / 3600)} h`;
+  if (seg < 172800) return "ayer";
+  return new Date(t).toLocaleDateString("es-PE", { day: "numeric", month: "short" });
+}
+
+function fechaDeEvento(ev) {
+  if (!ev?.fecha) return "";
+  const dia = new Date(`${ev.fecha}T00:00:00`).toLocaleDateString("es-PE", { weekday: "long", day: "numeric", month: "long" });
+  return [dia.charAt(0).toUpperCase() + dia.slice(1), ev.hora, ev.lugar].filter(Boolean).join(" · ");
+}
+
+function hostDe(url) {
+  try { return new URL(url).hostname.replace(/^www\./, ""); } catch (e) { return url; }
+}
+
+const ESTILO_CAMPO = { background: COLORS.bg, color: COLORS.lane, border: `1px solid ${COLORS.border}` };
+
+function PublicacionDelMuro({ p, esCoach, recargar }) {
+  const [respuesta, setRespuesta] = useState("");
+  const [enviando, setEnviando] = useState(false);
+  const [confirmar, setConfirmar] = useState(null); // "post" o el id de una respuesta
+  const [error, setError] = useState("");
+
+  const accion = async (op, extra) => {
+    setError("");
+    const r = await muroOp(op, extra);
+    if (r?.ok === false) setError(r.error || "No se pudo.");
+    setConfirmar(null);
+    await recargar();
+    return r;
+  };
+  const responder = async () => {
+    if (!respuesta.trim()) return;
+    setEnviando(true);
+    const r = await accion("responder", { idPost: p.id, datos: { texto: respuesta } });
+    setEnviando(false);
+    if (r?.ok) setRespuesta("");
+  };
+
+  const BotonBorrar = ({ que, extra }) => (
+    confirmar === que ? (
+      <span className="text-[11px] whitespace-nowrap" style={{ color: COLORS.textMuted }}>
+        ¿Borrar?{" "}
+        <button type="button" onClick={() => accion("borrar", extra)} style={{ color: COLORS.hard }}>Sí</button>{" · "}
+        <button type="button" onClick={() => setConfirmar(null)}>No</button>
+      </span>
+    ) : (
+      <button type="button" onClick={() => setConfirmar(que)} className="text-[11px]" style={{ color: COLORS.textMuted }}>Borrar</button>
+    )
+  );
+
+  return (
+    <article className="rounded-xl p-4" style={{ background: COLORS.surface, border: `1px solid ${p.nuevo ? COLORS.track + "99" : COLORS.border}` }}>
+      <header className="flex items-start justify-between gap-3 mb-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-semibold" style={{ color: p.autor?.rol === "coach" ? COLORS.track : COLORS.textPrimary }}>{p.autor?.nombre}</span>
+            {p.tipo === "anuncio" && (
+              <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded" style={{ background: COLORS.track + "22", color: COLORS.track }}>Anuncio</span>
+            )}
+            {p.fijado && !p.pasado && <Pin size={12} style={{ color: COLORS.moderate }} />}
+            {p.nuevo && <span className="text-[10px] font-bold tracking-wider" style={{ color: COLORS.track }}>NUEVO</span>}
+          </div>
+          <div className="text-[11px]" style={{ color: COLORS.textMuted }}>{cuandoFue(p.creado)}</div>
+        </div>
+        <div className="flex items-center gap-3 shrink-0">
+          {esCoach && p.tipo === "anuncio" && !p.pasado && (
+            <button type="button" onClick={() => accion("fijar", { idPost: p.id, fijado: !p.fijado })}
+              className="text-[11px]" style={{ color: COLORS.textMuted }}>{p.fijado ? "Desfijar" : "Fijar"}</button>
+          )}
+          {p.borrable && <BotonBorrar que="post" extra={{ idPost: p.id }} />}
+        </div>
+      </header>
+
+      <p className="text-sm whitespace-pre-wrap break-words" style={{ color: COLORS.lane }}>{p.texto}</p>
+
+      {p.evento && (
+        <div className="mt-3 flex items-start gap-2 rounded-lg px-3 py-2 text-sm" style={{ background: COLORS.bg, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
+          <CalendarDays size={15} style={{ color: COLORS.track, marginTop: 2, flexShrink: 0 }} />
+          <span>{fechaDeEvento(p.evento)}</span>
+        </div>
+      )}
+      {p.enlace && (
+        <a href={p.enlace} target="_blank" rel="noopener noreferrer nofollow"
+          className="mt-3 inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold"
+          style={{ background: COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
+          <Link2 size={14} /> {hostDe(p.enlace)}
+        </a>
+      )}
+      {p.leidoPor && (
+        <div className="text-[11px] mt-2" style={{ color: COLORS.textMuted }}>Leído por {p.leidoPor.leyeron} de {p.leidoPor.total}</div>
+      )}
+
+      {p.respuestas?.length > 0 && (
+        <div className="mt-3 pt-3 space-y-2.5" style={{ borderTop: `1px dashed ${COLORS.border}` }}>
+          {p.respuestas.map((r) => (
+            <div key={r.id} className="text-sm">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-semibold" style={{ color: r.autor?.rol === "coach" ? COLORS.track : COLORS.textPrimary }}>{r.autor?.nombre}</span>
+                <span className="text-[11px]" style={{ color: COLORS.textMuted }}>{cuandoFue(r.creado)}</span>
+                {r.borrable && <BotonBorrar que={r.id} extra={{ idPost: p.id, idRespuesta: r.id }} />}
+              </div>
+              <p className="whitespace-pre-wrap break-words" style={{ color: COLORS.lane }}>{r.texto}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="mt-3 flex items-center gap-2">
+        <input type="text" value={respuesta} onChange={(e) => setRespuesta(e.target.value)} maxLength={1000}
+          onKeyDown={(e) => { if (e.key === "Enter") responder(); }}
+          placeholder="Responder…" className="flex-1 min-w-0 rounded-lg px-3 py-2 text-sm" style={ESTILO_CAMPO} />
+        <button type="button" onClick={responder} disabled={!respuesta.trim() || enviando} aria-label="Enviar respuesta"
+          className="p-2 rounded-lg disabled:opacity-40" style={{ background: COLORS.track, color: COLORS.lane }}>
+          <Send size={16} />
+        </button>
+      </div>
+      {error && <p className="text-xs mt-2" style={{ color: COLORS.hard }}>{error}</p>}
+    </article>
+  );
+}
+
+function MuroAnuncios({ esCoach, onLeido }) {
+  const [muro, setMuro] = useState(null);
+  const [error, setError] = useState("");
+  const [texto, setTexto] = useState("");
+  const [enlace, setEnlace] = useState("");
+  const [conEvento, setConEvento] = useState(false);
+  const [evento, setEvento] = useState({ fecha: "", hora: "", lugar: "" });
+  const [fijado, setFijado] = useState(false);
+  const [enviando, setEnviando] = useState(false);
+  const [verPasados, setVerPasados] = useState(false);
+
+  const cargar = useCallback(async () => {
+    const r = await muroOp("listar");
+    if (r?.ok) { setMuro(r); setError(""); } else setError(r?.error || "No se pudo cargar el muro.");
+    return r;
+  }, []);
+
+  useEffect(() => {
+    let vivo = true;
+    const abrir = async () => {
+      const r = await cargar();
+      if (!vivo || !r?.ok) return;
+      if (r.noLeidos > 0) await muroOp("leer");
+      if (vivo) onLeido?.();
+    };
+    abrir();
+    // Mientras el muro está abierto se mira cada medio minuto si hay algo nuevo.
+    const t = setInterval(abrir, 30000);
+    return () => { vivo = false; clearInterval(t); };
+  }, [cargar]);
+
+  const publicar = async () => {
+    setEnviando(true); setError("");
+    const datos = esCoach
+      ? { texto, enlace, evento: conEvento ? evento : null, fijado }
+      : { texto };
+    const r = await muroOp("publicar", { datos });
+    setEnviando(false);
+    if (!r?.ok) { setError(r?.error || "No se pudo publicar."); return; }
+    setTexto(""); setEnlace(""); setConEvento(false); setEvento({ fecha: "", hora: "", lugar: "" }); setFijado(false);
+    await cargar();
+  };
+
+  const vigentes = muro ? [...muro.fijados, ...muro.recientes] : [];
+
+  return (
+    <div>
+      <div className="rounded-xl p-4 mb-4" style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}` }}>
+        <textarea rows={3} value={texto} onChange={(e) => setTexto(e.target.value)} maxLength={2000}
+          placeholder={esCoach ? "Escribí un anuncio para el grupo…" : "Escribí un mensaje para el grupo…"}
+          className="w-full rounded-lg px-3 py-2 text-sm resize-y" style={ESTILO_CAMPO} />
+        {esCoach && (
+          <div className="mt-2 space-y-2">
+            <input type="text" value={enlace} onChange={(e) => setEnlace(e.target.value)}
+              placeholder="Enlace (opcional): inscripción, formulario, video…"
+              className="w-full rounded-lg px-3 py-2 text-sm" style={ESTILO_CAMPO} />
+            <label className="flex items-center gap-2 text-xs cursor-pointer" style={{ color: COLORS.textMuted }}>
+              <input type="checkbox" checked={conEvento} onChange={(e) => setConEvento(e.target.checked)} style={{ accentColor: COLORS.track }} />
+              Es un evento (fecha, hora y lugar)
+            </label>
+            {conEvento && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                <input type="date" value={evento.fecha} onChange={(e) => setEvento((v) => ({ ...v, fecha: e.target.value }))}
+                  className="rounded-lg px-3 py-2 text-sm" style={ESTILO_CAMPO} />
+                <input type="time" value={evento.hora} onChange={(e) => setEvento((v) => ({ ...v, hora: e.target.value }))}
+                  className="rounded-lg px-3 py-2 text-sm" style={ESTILO_CAMPO} />
+                <input type="text" value={evento.lugar} onChange={(e) => setEvento((v) => ({ ...v, lugar: e.target.value }))} maxLength={120}
+                  placeholder="Lugar" className="col-span-2 sm:col-span-1 rounded-lg px-3 py-2 text-sm" style={ESTILO_CAMPO} />
+              </div>
+            )}
+            <label className="flex items-center gap-2 text-xs cursor-pointer" style={{ color: COLORS.textMuted }}>
+              <input type="checkbox" checked={fijado} onChange={(e) => setFijado(e.target.checked)} style={{ accentColor: COLORS.track }} />
+              Fijar arriba
+            </label>
+          </div>
+        )}
+        {error && <p className="text-xs mt-2" style={{ color: COLORS.hard }}>{error}</p>}
+        <div className="flex justify-end mt-2">
+          <button type="button" onClick={publicar} disabled={!texto.trim() || enviando}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-40"
+            style={{ background: COLORS.track, color: COLORS.lane }}>
+            <Send size={14} /> {enviando ? "Publicando…" : "Publicar"}
+          </button>
+        </div>
+      </div>
+
+      {!muro && !error && <p className="text-sm" style={{ color: COLORS.textMuted }}>Cargando…</p>}
+      {muro && vigentes.length === 0 && (
+        <p className="text-sm" style={{ color: COLORS.textMuted }}>
+          Todavía no hay nada. {esCoach ? "Publicá el primer anuncio." : "Cuando tu coach o tus compañeros publiquen algo, lo vas a ver acá."}
+        </p>
+      )}
+      <div className="space-y-3">
+        {vigentes.map((p) => <PublicacionDelMuro key={p.id} p={p} esCoach={esCoach} recargar={cargar} />)}
+      </div>
+
+      {muro?.pasados?.length > 0 && (
+        <div className="mt-6">
+          <button type="button" onClick={() => setVerPasados((v) => !v)} className="text-xs font-semibold mb-3" style={{ color: COLORS.textMuted }}>
+            {verPasados ? "Ocultar" : "Ver"} eventos pasados ({muro.pasados.length})
+          </button>
+          {verPasados && (
+            <div className="space-y-3 opacity-80">
+              {muro.pasados.map((p) => <PublicacionDelMuro key={p.id} p={p} esCoach={esCoach} recargar={cargar} />)}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Las cuatro pestañas de la barra inferior del alumno. El reloj vive dentro de Perfil.
 const PESTANAS_ALUMNO = [
   { id: "semana", etiqueta: "Semana", Icono: CalendarDays },
   { id: "progreso", etiqueta: "Progreso", Icono: BarChart2 },
-  { id: "reloj", etiqueta: "Reloj", Icono: Watch },
+  { id: "anuncios", etiqueta: "Anuncios", Icono: Megaphone },
   { id: "perfil", etiqueta: "Perfil", Icono: User },
 ];
 
@@ -4513,15 +4793,27 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
   // Pestaña activa de la barra inferior. Al cambiar de pestaña se vuelve arriba, como en
   // cualquier app: si no, se aterriza a media página de la sección anterior.
   const [pestana, setPestana] = useState("semana");
+  // Cuántas publicaciones del muro tiene sin leer: se mira al entrar y cada minuto.
+  const [pendientesMuro, setPendientesMuro] = useState(0);
+  useEffect(() => {
+    let vivo = true;
+    const mirar = async () => {
+      const r = await muroOp("pendientes");
+      if (vivo && r?.ok) setPendientesMuro(r.noLeidos || 0);
+    };
+    mirar();
+    const t = setInterval(mirar, 60000);
+    return () => { vivo = false; clearInterval(t); };
+  }, []);
   const irA = useCallback((p) => {
     setPestana(p);
     if (typeof window !== "undefined") window.scrollTo({ top: 0 });
   }, []);
   // Al volver de autorizar el reloj, la dirección trae "?reloj=…". El aviso lo muestra el
-  // panel del reloj, así que hay que abrir esa pestaña o el alumno no lo vería nunca.
+  // panel del reloj, que está en Perfil: hay que abrir esa pestaña o no lo vería nunca.
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (new URLSearchParams(window.location.search).has("reloj")) setPestana("reloj");
+    if (new URLSearchParams(window.location.search).has("reloj")) setPestana("perfil");
   }, []);
 
   useEffect(() => { safeGet(`student:${studentId}`).then(setStudent); }, [studentId]);
@@ -4950,14 +5242,10 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
         </div>
       )}
 
-      {student && pestana === "reloj" && (
-        <div className="space-y-4">
-          <h2 className="text-lg font-semibold" style={{ fontFamily: "'Oswald', sans-serif", color: COLORS.textPrimary }}>Tu reloj</h2>
-          <p className="text-sm" style={{ color: COLORS.textMuted }}>
-            Conectado a intervals.icu, tus entrenamientos te llegan solos al reloj, y lo que corras vuelve solo a tu plan.
-            Solo te queda poner el RPE.
-          </p>
-          <ConexionReloj student={student} onCambio={reloadStudent} onLectura={aplicarLectura} />
+      {student && pestana === "anuncios" && (
+        <div>
+          <h2 className="text-lg font-semibold mb-3" style={{ fontFamily: "'Oswald', sans-serif", color: COLORS.textPrimary }}>Anuncios</h2>
+          <MuroAnuncios onLeido={() => setPendientesMuro(0)} />
         </div>
       )}
 
@@ -4972,6 +5260,10 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
                 <Pill color={COLORS.track}>Carrera: {String(student.raceDate).slice(0, 10).split("-").reverse().join("/")}</Pill>
               )}
             </div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-widest mb-2" style={{ color: COLORS.textMuted }}>Tu reloj</div>
+            <ConexionReloj student={student} onCambio={reloadStudent} onLectura={aplicarLectura} />
           </div>
           {week && (
             <button onClick={() => exportWeekToPDF(student, week, activeWeekNum)}
@@ -5006,7 +5298,13 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
                 <button key={id} type="button" onClick={() => irA(id)} aria-current={activa ? "page" : undefined}
                   className="flex flex-col items-center justify-center gap-1 py-2 text-[11px] font-medium"
                   style={{ color: activa ? COLORS.track : COLORS.textMuted, minHeight: 58 }}>
-                  <Icono size={22} strokeWidth={activa ? 2.4 : 1.8} />
+                  <span className="relative">
+                    <Icono size={22} strokeWidth={activa ? 2.4 : 1.8} />
+                    {id === "anuncios" && pendientesMuro > 0 && (
+                      <span className="absolute -top-0.5 -right-1 rounded-full" aria-label="Hay anuncios nuevos"
+                        style={{ width: 10, height: 10, background: COLORS.track, border: `2px solid ${COLORS.surface}` }} />
+                    )}
+                  </span>
                   {etiqueta}
                 </button>
               );

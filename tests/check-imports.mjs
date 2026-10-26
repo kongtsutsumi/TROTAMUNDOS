@@ -10,6 +10,8 @@ const ARCHIVOS = [
   "lib/intervals-pull.js",
   "lib/intervals-read.mjs",
   "lib/intervals-push.js",
+  "lib/muro-servidor.js",
+  "app/api/muro/route.js",
   "app/api/intervals/route.js",
   "app/api/cron/route.js",
   "app/api/data/route.js",
