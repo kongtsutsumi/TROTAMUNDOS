@@ -1533,7 +1533,7 @@ function LapCard({ day: dayRaw, index, mode, log, onChangeDay, onChangeLog, isTo
                 className="rounded px-2 py-1 text-xs font-mono" style={{ background: COLORS.bg, color: COLORS.lane, border: `1px solid ${COLORS.border}` }} />
               {day.kmFijado && day.paceKey === "E" && (
                 <button type="button" onClick={() => onChangeDay(index, { ...day, liberar: true })}
-                  title="Este día lo fijaste a mano y el reajuste no lo mueve. Tocá para que vuelva a ajustarse solo."
+                  title="Este día lo fijaste a mano y el reajuste no lo mueve. Toca para que vuelva a ajustarse solo."
                   className="col-span-2 text-left text-[11px]" style={{ color: COLORS.textMuted }}>
                   Fijado a mano · <span style={{ color: COLORS.track }}>↺ que se ajuste solo</span>
                 </button>
@@ -2031,7 +2031,7 @@ function LecturaDelTiempo({ texto, goal }) {
     <p className="text-xs mt-1" style={{ color: leido ? COLORS.easy : COLORS.textMuted }}>
       {leido
         ? `= ${leido.lectura} · ritmo ${formatPace(leido.ritmo)}/km`
-        : "Todavía no lo entiendo: escribí 3:20 o 3:20:00 para 3 h 20 min, o 45:00 para 45 min."}
+        : "Todavía no lo entiendo: escribe 3:20 o 3:20:00 para 3 h 20 min, o 45:00 para 45 min."}
     </p>
   );
 }
@@ -2061,7 +2061,7 @@ function ChangeGoalForm({ student, onCancel, onSave, busy }) {
       if (!raceDate) return setError("Ingresa una fecha de carrera válida (dd/mm/aa).");
       if (goalInputMode === "time") {
         const leido = interpretarTiempoObjetivo(targetTimeStr, DISTANCE_KM[goal]);
-        if (!leido) return setError("No entendí ese tiempo para esta distancia. Escribilo como 3:20 o 3:20:00 para 3 h 20 min, o 45:00 para 45 min.");
+        if (!leido) return setError("No entendí ese tiempo para esta distancia. Escríbelo como 3:20 o 3:20:00 para 3 h 20 min, o 45:00 para 45 min.");
         finalPaceStr = formatPace(leido.ritmo);
       } else if (parsePaceToDecimal(targetPaceStr) === null) {
         return setError("Ritmo objetivo inválido. Usa el formato m:ss, ej. 5:30.");
@@ -2192,7 +2192,7 @@ function AddStudentForm({ onCancel, onCreate }) {
       if (!raceDate) return setError("Ingresa una fecha de carrera válida (dd/mm/aa).");
       if (goalInputMode === "time") {
         const leido = interpretarTiempoObjetivo(targetTimeStr, DISTANCE_KM[goal]);
-        if (!leido) return setError("No entendí ese tiempo para esta distancia. Escribilo como 3:20 o 3:20:00 para 3 h 20 min, o 45:00 para 45 min.");
+        if (!leido) return setError("No entendí ese tiempo para esta distancia. Escríbelo como 3:20 o 3:20:00 para 3 h 20 min, o 45:00 para 45 min.");
         finalPaceStr = formatPace(leido.ritmo);
       } else if (parsePaceToDecimal(targetPaceStr) === null) {
         return setError("Ritmo objetivo inválido. Usa el formato m:ss, ej. 5:30.");
@@ -4262,7 +4262,7 @@ const resetPlan = async () => {
                   </div>
                   <p className="text-xs mb-2" style={{ color: COLORS.textMuted }}>
                     {week.autoPublishedKind === "repetida"
-                      ? "El alumno venía de semanas sin plan, así que se repitió una estructura anterior sin avanzar el ciclo. Si corresponde retomar en otra etapa, cambiala."
+                      ? "El alumno venía de semanas sin plan, así que se repitió una estructura anterior sin avanzar el ciclo. Si corresponde retomar en otra etapa, cámbiala."
                       : "Es la sugerencia del sistema, sin tus ajustes. El alumno ya la tiene disponible; cualquier cambio que hagas le llega al instante."}
                   </p>
                   <p className="text-xs" style={{ color: COLORS.textMuted }}>{week.note}</p>
@@ -4410,7 +4410,7 @@ function ConexionReloj({ student, onCambio, onLectura }) {
       <div className="rounded-xl p-4" style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}` }}>
         <p className="text-sm" style={{ color: COLORS.textMuted }}>
           La conexión con relojes no está disponible en este momento. Tus entrenamientos siguen acá como siempre; si
-          la necesitás, avisale a tu coach.
+          la necesitas, avísale a tu coach.
         </p>
       </div>
     );
@@ -4433,11 +4433,11 @@ function ConexionReloj({ student, onCambio, onLectura }) {
       setAvisoLectura(`Listo: ${r.actualizadas} sesión${r.actualizadas === 1 ? "" : "es"} al día.`);
       await onLectura?.();
     } else if (r?.motivo === "permiso-revocado") {
-      setAvisoLectura("intervals.icu ya no acepta el permiso. Volvé a conectar tu reloj.");
+      setAvisoLectura("intervals.icu ya no acepta el permiso. Vuelve a conectar tu reloj.");
     } else if (r?.ok) {
-      setAvisoLectura("No hay nada nuevo. Si acabás de entrenar, dale unos minutos a que el reloj sincronice.");
+      setAvisoLectura("No hay nada nuevo. Si acabas de entrenar, dale unos minutos a que el reloj sincronice.");
     } else {
-      setAvisoLectura("No se pudo consultar ahora. Probá en un rato.");
+      setAvisoLectura("No se pudo consultar ahora. Prueba en un rato.");
     }
     setTrayendo(false);
     await cargar();
@@ -4457,7 +4457,7 @@ function ConexionReloj({ student, onCambio, onLectura }) {
       <div className="flex items-center gap-2 mb-1">
         <Activity size={16} style={{ color: estado.conectado ? COLORS.easy : COLORS.textMuted }} />
         <span className="text-sm font-semibold" style={{ color: COLORS.textPrimary }}>
-          {estado.conectado ? "Tu reloj está conectado" : "Conectá tu reloj"}
+          {estado.conectado ? "Tu reloj está conectado" : "Conecta tu reloj"}
         </span>
       </div>
 
@@ -4465,7 +4465,7 @@ function ConexionReloj({ student, onCambio, onLectura }) {
         <p className="text-xs mb-2" style={{ color: aviso.estado === "conectado" ? COLORS.easy : COLORS.hard }}>
           {aviso.estado === "conectado" && "Listo. Tus entrenamientos empezarán a llegarte al reloj."}
           {aviso.estado === "cancelado" && "No autorizaste la conexión. No pasa nada: todo sigue igual."}
-          {aviso.estado === "error" && `No se pudo conectar (${aviso.motivo}). Probá de nuevo.`}
+          {aviso.estado === "error" && `No se pudo conectar (${aviso.motivo}). Prueba de nuevo.`}
         </p>
       )}
 
@@ -4476,7 +4476,7 @@ function ConexionReloj({ student, onCambio, onLectura }) {
             {estado.ultimoEnvio && (
               estado.ultimoEnvio.ok
                 ? ` Último envío: semana ${estado.ultimoEnvio.semana}, ${estado.ultimoEnvio.enviados} sesiones.`
-                : ` El último envío no salió (${estado.ultimoEnvio.motivo}) — avisale a tu coach si no te aparecen.`
+                : ` El último envío no salió (${estado.ultimoEnvio.motivo}) — avísale a tu coach si no te aparecen.`
             )}
           </p>
           <div className="flex flex-wrap items-center gap-2 mb-2">
@@ -4507,12 +4507,12 @@ function ConexionReloj({ student, onCambio, onLectura }) {
       ) : (
         <>
           <p className="text-sm mb-2" style={{ color: COLORS.textMuted }}>
-            Si conectás tu cuenta de intervals.icu, los entrenamientos que arma tu coach te
-            aparecen solos en el reloj, con sus ritmos. Es opcional y lo podés cortar cuando quieras.
+            Si conectas tu cuenta de intervals.icu, los entrenamientos que arma tu coach te
+            aparecen solos en el reloj, con sus ritmos. Es opcional y lo puedes cortar cuando quieras.
           </p>
           <p className="text-xs mb-3" style={{ color: COLORS.textMuted }}>
             Se piden dos permisos: escribir los entrenamientos en tu calendario y leer las
-            actividades que completás. Nada más.
+            actividades que completas. Nada más.
           </p>
           <button onClick={conectar} disabled={ocupado} className="px-4 py-2 rounded-lg text-sm font-semibold"
             style={{ background: COLORS.track, color: COLORS.lane }}>
@@ -4711,7 +4711,7 @@ function MuroAnuncios({ esCoach, onLeido }) {
     <div>
       <div className="rounded-xl p-4 mb-4" style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}` }}>
         <textarea rows={3} value={texto} onChange={(e) => setTexto(e.target.value)} maxLength={2000}
-          placeholder={esCoach ? "Escribí un anuncio para el grupo…" : "Escribí un mensaje para el grupo…"}
+          placeholder={esCoach ? "Escribe un anuncio para el grupo…" : "Escribe un mensaje para el grupo…"}
           className="w-full rounded-lg px-3 py-2 text-sm resize-y" style={ESTILO_CAMPO} />
         {esCoach && (
           <div className="mt-2 space-y-2">
@@ -4751,7 +4751,7 @@ function MuroAnuncios({ esCoach, onLeido }) {
       {!muro && !error && <p className="text-sm" style={{ color: COLORS.textMuted }}>Cargando…</p>}
       {muro && vigentes.length === 0 && (
         <p className="text-sm" style={{ color: COLORS.textMuted }}>
-          Todavía no hay nada. {esCoach ? "Publicá el primer anuncio." : "Cuando tu coach o tus compañeros publiquen algo, lo vas a ver acá."}
+          Todavía no hay nada. {esCoach ? "Publica el primer anuncio." : "Cuando tu coach o tus compañeros publiquen algo, lo vas a ver acá."}
         </p>
       )}
       <div className="space-y-3">

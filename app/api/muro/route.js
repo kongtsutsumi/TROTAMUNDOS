@@ -48,7 +48,7 @@ export async function POST(request) {
     if (op === "leer") return responderJson(await marcarLeido(autor));
   } catch (e) {
     console.error("muro:", op, e);
-    return NextResponse.json({ ok: false, error: "Algo falló. Probá de nuevo." }, { status: 500 });
+    return NextResponse.json({ ok: false, error: "Algo falló. Prueba de nuevo." }, { status: 500 });
   }
 
   return NextResponse.json({ error: "Operación desconocida" }, { status: 400 });

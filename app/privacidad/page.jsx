@@ -60,7 +60,7 @@ export default function Privacidad() {
 
         <Seccion titulo="Quién es responsable de tus datos">
           Jaime Kong Tsutsumi, en Lima, Perú. Para cualquier consulta sobre esta política o
-          sobre tus datos, escribí a{" "}
+          sobre tus datos, escribe a{" "}
           <a href={`mailto:${CONTACTO}`} style={{ color: C.track }}>{CONTACTO}</a>.
         </Seccion>
 
@@ -76,37 +76,37 @@ export default function Privacidad() {
               tus marcas y ritmos, la fecha de tu carrera, y el plan semanal que arma tu coach.
             </li>
             <li style={{ marginBottom: 6 }}>
-              <strong style={{ color: C.lane }}>Lo que registrás:</strong> qué sesiones
+              <strong style={{ color: C.lane }}>Lo que registras:</strong> qué sesiones
               completaste, kilómetros, ritmo, esfuerzo percibido y las notas que escribas.
             </li>
             <li>
-              <strong style={{ color: C.lane }}>Si conectás tu reloj:</strong> las actividades
+              <strong style={{ color: C.lane }}>Si conectas tu reloj:</strong> las actividades
               que vuelven de ese servicio — distancia, duración, ritmo, vueltas y, cuando
               existe, frecuencia cardíaca.
             </li>
           </ul>
           <p style={{ marginTop: 10 }}>
             No se pide ni se guarda documento de identidad, dirección, datos bancarios ni
-            información de salud más allá de lo que vos registres sobre tus entrenamientos.
+            información de salud más allá de lo que tú registres sobre tus entrenamientos.
           </p>
         </Seccion>
 
         <Seccion titulo="Para qué se usan">
-          Para diseñar tu plan, ajustarlo según cómo venís respondiendo, llevar tu historial y
+          Para diseñar tu plan, ajustarlo según cómo vienes respondiendo, llevar tu historial y
           que tu coach pueda darte seguimiento. Tu coach ve tus datos de entrenamiento: esa es
           justamente la razón de ser de la aplicación. Los demás alumnos no los ven.
         </Seccion>
 
         <Seccion titulo="Conectar tu reloj">
           <p style={{ marginBottom: 10 }}>
-            Podés conectar tu cuenta de intervals.icu para que los entrenamientos lleguen solos
+            Puedes conectar tu cuenta de intervals.icu para que los entrenamientos lleguen solos
             a tu reloj y las actividades que completes vuelvan a tu plan. Esa conexión:
           </p>
           <ul style={{ paddingLeft: 22, margin: 0, listStyle: "disc" }}>
             <li style={{ marginBottom: 6 }}>Es <strong style={{ color: C.lane }}>voluntaria</strong>. Sin ella la aplicación funciona igual.</li>
-            <li style={{ marginBottom: 6 }}>La autorizás vos, viendo antes qué permisos se piden.</li>
+            <li style={{ marginBottom: 6 }}>La autorizas tú, viendo antes qué permisos se piden.</li>
             <li style={{ marginBottom: 6 }}>Se limita a escribir entrenamientos en tu calendario y leer tus actividades.</li>
-            <li>La podés <strong style={{ color: C.lane }}>cortar cuando quieras</strong>, desde la propia aplicación o desde tu cuenta de intervals.icu.</li>
+            <li>La puedes <strong style={{ color: C.lane }}>cortar cuando quieras</strong>, desde la propia aplicación o desde tu cuenta de intervals.icu.</li>
           </ul>
           <p style={{ marginTop: 10 }}>
             Al conectarla, esos datos pasan por intervals.icu según su propia política de
@@ -121,7 +121,7 @@ export default function Privacidad() {
           <ul style={{ paddingLeft: 22, margin: 0, listStyle: "disc" }}>
             <li style={{ marginBottom: 6 }}><strong style={{ color: C.lane }}>Supabase</strong> — guarda la base de datos.</li>
             <li style={{ marginBottom: 6 }}><strong style={{ color: C.lane }}>Vercel</strong> — publica la aplicación en internet.</li>
-            <li><strong style={{ color: C.lane }}>intervals.icu</strong> — solo si vos conectás tu reloj.</li>
+            <li><strong style={{ color: C.lane }}>intervals.icu</strong> — solo si tú conectas tu reloj.</li>
           </ul>
           <p style={{ marginTop: 10 }}>
             Tus datos no se venden ni se ceden a terceros con fines comerciales o publicitarios.
@@ -130,12 +130,12 @@ export default function Privacidad() {
 
         <Seccion titulo="Cuánto tiempo se conservan">
           Mientras entrenes con el coach, porque tu historial es parte de tu progresión. Si
-          dejás de entrenar y querés que se borren, pedilo y se eliminan.
+          dejas de entrenar y quieres que se borren, pídelo y se eliminan.
         </Seccion>
 
         <Seccion titulo="Tus derechos">
           <p style={{ marginBottom: 10 }}>
-            Podés pedir en cualquier momento acceder a tus datos, corregirlos, llevártelos o
+            Puedes pedir en cualquier momento acceder a tus datos, corregirlos, llevártelos o
             borrarlos, y retirar tu consentimiento para la conexión con tu reloj. Basta con
             escribir a{" "}
             <a href={`mailto:${CONTACTO}`} style={{ color: C.track }}>{CONTACTO}</a>.

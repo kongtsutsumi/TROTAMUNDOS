@@ -882,7 +882,7 @@ console.log("\n▸ Publicación automática de la semana");
   check("Las semanas sin plan quedan registradas como sin actividad",
     aus.updated.weeks[4]?.inactive === true && aus.updated.weeks[5]?.inactive === true);
   check("La semana repetida conserva el volumen de la última real", aus.updated.weeks[6].weeklyKm === 45, `dio ${aus.updated.weeks[6].weeklyKm}`);
-  check("La semana repetida avisa al coach que la revise", (aus.updated.weeks[6].note || "").includes("Revisá"));
+  check("La semana repetida avisa al coach que la revise", (aus.updated.weeks[6].note || "").includes("Revisa"));
   check("Tras una ausencia también es idempotente", E.autoPublishDueWeek(aus.updated).published === null);
 
   // --- Adherencia real: la semana ya fue vivida, aunque no se haya enviado ---
