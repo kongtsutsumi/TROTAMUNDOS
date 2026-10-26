@@ -4,6 +4,7 @@ import { kvGet, kvSet, kvDelete } from "../../../lib/supabaseAdmin";
 import { verifySessionToken, SESSION_COOKIE } from "../../../lib/session";
 import { canRead, canWrite, canDelete, sanitizeForSession } from "../../../lib/permissions";
 import { publishDueWeekFor, sanitizeLocalDate } from "../../../lib/autoPublish";
+import { reenviarSemanasCambiadas } from "../../../lib/intervals-push";
 
 async function getSession() {
   const store = await cookies();
@@ -29,6 +30,11 @@ function isPureReorder(basePlan, incomingPlan) {
 // la semana los escribe el SERVIDOR, no los navegadores. Ni el alumno ni el coach pueden
 // crearlos, cambiarlos ni borrarlos: su copia de la semana puede ser de hace un rato y al
 // guardar los barrería sin querer. Siempre mandan los guardados.
+// El día de hoy en Lima, para saber qué semanas del reloj ya pasaron.
+function hoyEnLima() {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Lima", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+}
+
 function conservarLoDelReloj(incomingLog, storedLog) {
   return (incomingLog || []).map((entry, i) => {
     const copia = entry && typeof entry === "object" ? { ...entry } : {};
@@ -78,9 +84,11 @@ export async function POST(request) {
   if (op === "set") {
     if (!canWrite(session, key)) return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
     let toSave = value;
+    let previo = null; // cómo estaba guardado: para saber si cambió el calendario del reloj
     if (session.role === "student") {
       const current = await kvGet(key);
       if (!current) return NextResponse.json({ error: "Registro no encontrado" }, { status: 404 });
+      previo = current;
       // El alumno solo es dueño de SU REGISTRO de sesiones (el "log") y del orden de sus días.
       // Todo lo demás — el plan que arma el coach, los ritmos, el objetivo — se conserva del
       // registro guardado. Antes se aceptaba el bloque "weeks" completo del navegador, así que
@@ -138,9 +146,30 @@ export async function POST(request) {
         }
         toSave = { ...value, weeks: mergedWeeks };
       }
+      previo = current;
+      // La conexión con el reloj (intervals) es del servidor: la crea y la borra la ruta de
+      // intervals.icu cuando el alumno conecta o desconecta. La copia del navegador del coach
+      // puede ser de antes de eso, y al guardar la borraría —o resucitaría una cortada—.
+      // Siempre manda la guardada.
+      if (current && typeof key === "string" && key.startsWith("student:") && toSave && typeof toSave === "object") {
+        const { intervals: _delNavegador, ...resto } = toSave;
+        toSave = current.intervals ? { ...resto, intervals: current.intervals } : resto;
+      }
     }
     const ok = await kvSet(key, toSave);
-    return NextResponse.json({ ok });
+
+    // Si el guardado cambió el calendario del reloj en una semana actual o futura, se
+    // reenvía. Cubre todo: cerrar la semana, editar, deshacer, el alumno que mueve un día.
+    let reloj = null;
+    if (ok && previo && typeof key === "string" && key.startsWith("student:")) {
+      try {
+        const r = await reenviarSemanasCambiadas(previo, toSave, { hoy: hoyEnLima() });
+        if (r.semanas.length) reloj = { semanas: r.semanas, ok: r.ok };
+      } catch (e) {
+        console.error("no se pudo reenviar al reloj después de guardar", e);
+      }
+    }
+    return NextResponse.json({ ok, reloj });
   }
 
   if (op === "rosterSummary") {
@@ -181,6 +210,14 @@ export async function POST(request) {
         // Para avisar en el listado cuáles semanas se publicaron solas y el coach todavía
         // no revisó, sin tener que entrar a cada alumno.
         autoPublished: !!week?.autoPublished,
+        // Solo para quien tiene el reloj conectado. "problema" si intervals.icu ya no acepta
+        // el permiso o el último envío no salió: el coach lo ve en el listado sin entrar.
+        reloj: (s.intervals?.token || s.intervals?.pruebaConClaveDelCoach)
+          ? {
+              problema: s.intervals?.errorDeLectura === "permiso-revocado" || s.intervals?.ultimoEnvio?.ok === false,
+              ultimoEnvio: s.intervals?.ultimoEnvio?.fecha ?? null,
+            }
+          : null,
         compliance: sTotal ? {
           weeks: closed.length, sessionsDone: sDone, sessionsTotal: sTotal,
           sessionsPct: sDone / sTotal,

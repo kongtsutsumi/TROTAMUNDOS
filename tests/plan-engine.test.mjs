@@ -1254,6 +1254,57 @@ console.log("\n▸ En todos los planes de carrera ningún easy queda por debajo 
   }
 }
 
+
+console.log("\n▸ Qué semanas se reenvían al reloj después de guardar");
+{
+  const IC = await import("../lib/intervals-icu.mjs");
+  const paces = E.computeTrainingPaces(E.computeVDOT(42.195, E.parsePaceToDecimal("5:00")));
+  const r = E.buildInitialRacePlan("42k", "intermedio2", 75, E.capLongRunKm("42k", "intermedio2", 999), 10, paces);
+  // Semana 1 empieza el 5 de octubre: con "hoy" 13/10 la 1 ya pasó y la 2 está en curso.
+  const base = {
+    id: "ana", planStartMonday: "2026-10-05", paces,
+    weeks: {
+      1: { plan: r.plan, log: E.emptyLog() },
+      2: { plan: r.plan, log: E.emptyLog() },
+    },
+  };
+  const HOY = "2026-10-13";
+  const copia = (o) => JSON.parse(JSON.stringify(o));
+  const diaConSesion = r.plan.findIndex((d) => d.paceKey === "E");
+
+  check("Sin cambios no se reenvía nada", IC.semanasParaReenviar(base, copia(base), HOY).length === 0);
+
+  const conRpe = copia(base);
+  conRpe.weeks[2].log[diaConSesion] = { completed: true, actualKm: "8", rpe: "6", note: "bien" };
+  check("Registrar RPE o una nota no reenvía", IC.semanasParaReenviar(base, conRpe, HOY).length === 0);
+
+  const editada = copia(base);
+  editada.weeks[2].plan[diaConSesion].km += 2;
+  check("Editar los km de una sesión de esta semana la reenvía",
+    JSON.stringify(IC.semanasParaReenviar(base, editada, HOY)) === "[2]",
+    JSON.stringify(IC.semanasParaReenviar(base, editada, HOY)));
+
+  const aDescanso = copia(base);
+  aDescanso.weeks[2].plan[diaConSesion] = { ...aDescanso.weeks[2].plan[diaConSesion], paceKey: "", km: 0, type: "Descanso" };
+  check("Pasar un día a descanso la reenvía", JSON.stringify(IC.semanasParaReenviar(base, aDescanso, HOY)) === "[2]");
+
+  const pasada = copia(base);
+  pasada.weeks[1].plan[diaConSesion].km += 2;
+  check("Editar una semana que ya terminó no reenvía", IC.semanasParaReenviar(base, pasada, HOY).length === 0);
+
+  const cerrada = copia(base);
+  cerrada.weeks[3] = { plan: r.plan, log: E.emptyLog() };
+  check("Cerrar la semana y generar la siguiente envía la nueva",
+    JSON.stringify(IC.semanasParaReenviar(base, cerrada, HOY)) === "[3]",
+    JSON.stringify(IC.semanasParaReenviar(base, cerrada, HOY)));
+  check("Deshacer ese cierre también la reenvía (para retirarla del reloj)",
+    JSON.stringify(IC.semanasParaReenviar(cerrada, base, HOY)) === "[3]");
+
+  const rango = IC.rangoDeSemana(base, 2);
+  check("La semana 2 va de lunes a domingo", rango?.desde === "2026-10-12" && rango?.hasta === "2026-10-18", JSON.stringify(rango));
+  check("Sin fecha de arranque no hay rango", IC.rangoDeSemana({ weeks: {} }, 1) === null);
+}
+
 // ============================================================
 // RESULTADO
 // ============================================================

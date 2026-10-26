@@ -3795,6 +3795,15 @@ const resetPlan = async () => {
                 <div className="min-w-0">
                   <div className="text-sm font-semibold truncate flex items-center gap-2" style={{ color: COLORS.textPrimary }}>
                     {r.name}
+                    {rosterProgress[r.id]?.reloj && (
+                      <span className="inline-flex shrink-0"
+                        title={rosterProgress[r.id].reloj.problema
+                          ? "Reloj conectado, pero la última conexión falló: revisa su ficha"
+                          : "Reloj conectado"}
+                        aria-label={rosterProgress[r.id].reloj.problema ? "Reloj con problemas" : "Reloj conectado"}>
+                        <Watch size={14} style={{ color: rosterProgress[r.id].reloj.problema ? COLORS.hard : COLORS.easy }} />
+                      </span>
+                    )}
                   </div>
                   {r.waitingApproval && (
                     <div className="flex items-center gap-1.5 mt-1 px-2 py-0.5 rounded-full w-fit" style={{ background: COLORS.track }}>

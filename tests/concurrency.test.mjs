@@ -58,7 +58,8 @@ function mergeAsCoach(current, value) {
     });
     mergedWeeks[wkNum] = { ...incoming, log: conservarLoDelReloj(mergedLog, stored.log), extras: stored.extras ?? incoming.extras };
   }
-  return { ...value, weeks: mergedWeeks };
+  const { intervals: _n, ...resto } = { ...value, weeks: mergedWeeks };
+  return current.intervals ? { ...resto, intervals: current.intervals } : resto;
 }
 
 const base = () => ({
@@ -688,6 +689,21 @@ console.log("\n▸ Lo que trae el reloj no lo puede borrar un navegador");
   const nueva = { ...guardado, weeks: { ...guardado.weeks, 4: { plan: [{ paceKey: "E", km: 5 }], log: [{ completed: false }] } } };
   const trasNueva = mergeAsCoach(guardado, nueva);
   check("Una semana nueva pasa sin problema", trasNueva.weeks[4].plan[0].km === 5);
+}
+
+
+console.log("\n▸ La conexión con el reloj no la puede pisar el navegador del coach");
+{
+  const conectado = { id: "ana", weeks: { 1: { plan: [{ paceKey: "E", km: 8 }], log: [{}] } }, intervals: { token: "secreto", athleteId: "i1" } };
+  const copiaVieja = { id: "ana", weeks: { 1: { plan: [{ paceKey: "E", km: 9 }], log: [{}] } } };
+  const tras = mergeAsCoach(conectado, copiaVieja);
+  check("El coach guarda su cambio de plan", tras.weeks[1].plan[0].km === 9);
+  check("Y la conexión del alumno sigue ahí", tras.intervals?.token === "secreto");
+
+  const desconectado = { id: "ana", weeks: { 1: { plan: [{ paceKey: "E", km: 8 }], log: [{}] } } };
+  const copiaConToken = { ...copiaVieja, intervals: { token: "viejo-revocado" } };
+  const tras2 = mergeAsCoach(desconectado, copiaConToken);
+  check("Una copia vieja no resucita una conexión cortada", tras2.intervals === undefined, JSON.stringify(tras2.intervals));
 }
 
 console.log("\n" + "─".repeat(52));
