@@ -86,6 +86,9 @@ import {
   parseDDMMYYToISO,
   parsePaceToDecimal,
   parseTimeToMinutes,
+  interpretarTiempoObjetivo,
+  repartirVolumen,
+  esDiaDeVolumen,
   projectWeeklyVolumes,
   r1,
   suggestQualityPaces,
@@ -1528,6 +1531,13 @@ function LapCard({ day: dayRaw, index, mode, log, onChangeDay, onChangeLog, isTo
               <input type="number" min="0" step="0.5" value={day.km}
                 onChange={(e) => onChangeDay(index, { ...day, km: Number(e.target.value) || 0 })}
                 className="rounded px-2 py-1 text-xs font-mono" style={{ background: COLORS.bg, color: COLORS.lane, border: `1px solid ${COLORS.border}` }} />
+              {day.kmFijado && day.paceKey === "E" && (
+                <button type="button" onClick={() => onChangeDay(index, { ...day, liberar: true })}
+                  title="Este día lo fijaste a mano y el reajuste no lo mueve. Tocá para que vuelva a ajustarse solo."
+                  className="col-span-2 text-left text-[11px]" style={{ color: COLORS.textMuted }}>
+                  Fijado a mano · <span style={{ color: COLORS.track }}>↺ que se ajuste solo</span>
+                </button>
+              )}
               {displayPaceKey(day.paceKey) === "T" && (
                 <select value={day.paceKey} onChange={(e) => onChangeDay(index, { ...day, paceKey: e.target.value })}
                   className="col-span-2 rounded px-2 py-1 text-xs" style={{ background: COLORS.bg, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
@@ -2012,6 +2022,20 @@ function StudentGate({ roster, onSuccess, onBack }) {
 /* ---------------------------------------------------------
    COACH DASHBOARD — piezas auxiliares
 --------------------------------------------------------- */
+// Debajo del campo de tiempo objetivo, cómo lo entendió la app. Así el coach ve al
+// instante si "3:20" quedó como 3 h 20 min, antes de crear un plan con eso.
+function LecturaDelTiempo({ texto, goal }) {
+  if (!texto || !String(texto).trim()) return null;
+  const leido = interpretarTiempoObjetivo(texto, DISTANCE_KM[goal]);
+  return (
+    <p className="text-xs mt-1" style={{ color: leido ? COLORS.easy : COLORS.textMuted }}>
+      {leido
+        ? `= ${leido.lectura} · ritmo ${formatPace(leido.ritmo)}/km`
+        : "Todavía no lo entiendo: escribí 3:20 o 3:20:00 para 3 h 20 min, o 45:00 para 45 min."}
+    </p>
+  );
+}
+
 function ChangeGoalForm({ student, onCancel, onSave, busy }) {
   const [goal, setGoal] = useState(student.goal);
   const [level, setLevel] = useState(student.level);
@@ -2036,9 +2060,9 @@ function ChangeGoalForm({ student, onCancel, onSave, busy }) {
     if (needsRaceInfo) {
       if (!raceDate) return setError("Ingresa una fecha de carrera válida (dd/mm/aa).");
       if (goalInputMode === "time") {
-        const totalMin = parseTimeToMinutes(targetTimeStr);
-        if (totalMin === null) return setError("Tiempo objetivo inválido. Usa el formato h:mm:ss o mm:ss, ej. 3:15:00.");
-        finalPaceStr = formatPace(totalMin / DISTANCE_KM[goal]);
+        const leido = interpretarTiempoObjetivo(targetTimeStr, DISTANCE_KM[goal]);
+        if (!leido) return setError("No entendí ese tiempo para esta distancia. Escribilo como 3:20 o 3:20:00 para 3 h 20 min, o 45:00 para 45 min.");
+        finalPaceStr = formatPace(leido.ritmo);
       } else if (parsePaceToDecimal(targetPaceStr) === null) {
         return setError("Ritmo objetivo inválido. Usa el formato m:ss, ej. 5:30.");
       }
@@ -2103,8 +2127,12 @@ function ChangeGoalForm({ student, onCancel, onSave, busy }) {
                 <input type="text" placeholder="5:30 (min:seg / km)" value={targetPaceStr} onChange={(e) => setTargetPaceStr(e.target.value)}
                   className="w-full rounded px-3 py-2 text-sm font-mono" style={{ background: COLORS.bg, color: COLORS.lane, border: `1px solid ${COLORS.border}` }} />
               ) : (
-                <input type="text" placeholder="3:15:00 (h:mm:ss) o 22:30 (mm:ss)" value={targetTimeStr} onChange={(e) => setTargetTimeStr(e.target.value)}
-                  className="w-full rounded px-3 py-2 text-sm font-mono" style={{ background: COLORS.bg, color: COLORS.lane, border: `1px solid ${COLORS.border}` }} />
+                <>
+                  <input type="text" placeholder={DISTANCE_KM[goal] >= 21 ? "3:20 o 3:20:00 (horas:minutos)" : "45:00 (minutos:segundos)"}
+                    value={targetTimeStr} onChange={(e) => setTargetTimeStr(e.target.value)}
+                    className="w-full rounded px-3 py-2 text-sm font-mono" style={{ background: COLORS.bg, color: COLORS.lane, border: `1px solid ${COLORS.border}` }} />
+                  <LecturaDelTiempo texto={targetTimeStr} goal={goal} />
+                </>
               )}
             </div>
             <div className="sm:col-span-2">
@@ -2149,7 +2177,7 @@ function AddStudentForm({ onCancel, onCreate }) {
   let suggestedPeak = null;
   if (needsRaceInfo) {
     const effectivePaceStr = goalInputMode === "time"
-      ? (parseTimeToMinutes(targetTimeStr) != null ? formatPace(parseTimeToMinutes(targetTimeStr) / DISTANCE_KM[goal]) : null)
+      ? (interpretarTiempoObjetivo(targetTimeStr, DISTANCE_KM[goal]) ? formatPace(interpretarTiempoObjetivo(targetTimeStr, DISTANCE_KM[goal]).ritmo) : null)
       : targetPaceStr;
     const paceDecimal = parsePaceToDecimal(effectivePaceStr);
     if (paceDecimal != null) suggestedPeak = computePeakKm(goal, level, computeVDOT(DISTANCE_KM[goal], paceDecimal));
@@ -2163,9 +2191,9 @@ function AddStudentForm({ onCancel, onCreate }) {
     if (needsRaceInfo) {
       if (!raceDate) return setError("Ingresa una fecha de carrera válida (dd/mm/aa).");
       if (goalInputMode === "time") {
-        const totalMin = parseTimeToMinutes(targetTimeStr);
-        if (totalMin === null) return setError("Tiempo objetivo inválido. Usa el formato h:mm:ss o mm:ss, ej. 3:15:00.");
-        finalPaceStr = formatPace(totalMin / DISTANCE_KM[goal]);
+        const leido = interpretarTiempoObjetivo(targetTimeStr, DISTANCE_KM[goal]);
+        if (!leido) return setError("No entendí ese tiempo para esta distancia. Escribilo como 3:20 o 3:20:00 para 3 h 20 min, o 45:00 para 45 min.");
+        finalPaceStr = formatPace(leido.ritmo);
       } else if (parsePaceToDecimal(targetPaceStr) === null) {
         return setError("Ritmo objetivo inválido. Usa el formato m:ss, ej. 5:30.");
       }
@@ -2261,8 +2289,12 @@ function AddStudentForm({ onCancel, onCreate }) {
                 <input type="text" placeholder="5:30 (min:seg / km)" value={targetPaceStr} onChange={(e) => setTargetPaceStr(e.target.value)}
                   className="w-full rounded px-3 py-2 text-sm font-mono" style={{ background: COLORS.bg, color: COLORS.lane, border: `1px solid ${COLORS.border}` }} />
               ) : (
-                <input type="text" placeholder="3:15:00 (h:mm:ss) o 22:30 (mm:ss)" value={targetTimeStr} onChange={(e) => setTargetTimeStr(e.target.value)}
-                  className="w-full rounded px-3 py-2 text-sm font-mono" style={{ background: COLORS.bg, color: COLORS.lane, border: `1px solid ${COLORS.border}` }} />
+                <>
+                  <input type="text" placeholder={DISTANCE_KM[goal] >= 21 ? "3:20 o 3:20:00 (horas:minutos)" : "45:00 (minutos:segundos)"}
+                    value={targetTimeStr} onChange={(e) => setTargetTimeStr(e.target.value)}
+                    className="w-full rounded px-3 py-2 text-sm font-mono" style={{ background: COLORS.bg, color: COLORS.lane, border: `1px solid ${COLORS.border}` }} />
+                  <LecturaDelTiempo texto={targetTimeStr} goal={goal} />
+                </>
               )}
             </div>
             <div className="sm:col-span-2">
@@ -3004,10 +3036,28 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
     setBusy(false);
   };
 
+  // Al cambiar un día, los easy y run/walk se reajustan entre todos para que la semana
+  // siga sumando su objetivo (ver repartirVolumen en el motor). Solo en planes de carrera:
+  // los de principiante y fitness avanzan por etapas y no se tocan.
+  //
+  // Un easy o run/walk que el coach cambia a mano queda FIJO: es una decisión suya y el
+  // reajuste no lo mueve. Para devolverlo al reparto automático, la tarjeta manda
+  // { liberar: true }.
   const updateDay = (index, newDay) => {
     setStudent((s) => {
       const week = s.weeks[s.currentWeek];
-      const plan = week.plan.map((d, i) => (i === index ? newDay : d));
+      const anterior = week.plan[index];
+      let dia = newDay;
+      if (newDay?.liberar) {
+        const { liberar, kmFijado, ...resto } = newDay;
+        dia = resto;
+      } else if (esDiaDeVolumen(anterior) && (Number(newDay.km) !== Number(anterior.km) || newDay.paceKey !== anterior.paceKey)) {
+        const { descansoPorVolumen, ...resto } = newDay;
+        dia = { ...resto, kmFijado: true };
+      }
+      let plan = week.plan.map((d, i) => (i === index ? dia : d));
+      const seReajusta = !isFitnessGoal(s.goal) && week.weeklyKm > 0 && !["principiante", "fitness"].includes(week.phase);
+      if (seReajusta) plan = repartirVolumen(plan, week.weeklyKm).plan;
       return { ...s, weeks: { ...s.weeks, [s.currentWeek]: { ...week, plan } } };
     });
   };
@@ -4212,6 +4262,20 @@ const resetPlan = async () => {
                 </div>
               )}
 
+              {/* Lo que suma la semana contra su objetivo, a la vista mientras se edita. */}
+              {isViewingLive && week.weeklyKm > 0 && (() => {
+                const suma = Math.round(week.plan.reduce((t, d) => t + (Number(d?.km) || 0), 0) * 10) / 10;
+                const dif = Math.round((suma - week.weeklyKm) * 10) / 10;
+                const cuadra = Math.abs(dif) < 0.15;
+                return (
+                  <div className="text-xs mb-2" style={{ color: cuadra ? COLORS.textMuted : COLORS.moderate }}>
+                    Suma de la semana: <b style={{ color: COLORS.lane }}>{suma} km</b> de {week.weeklyKm} km
+                    {!cuadra && (dif > 0
+                      ? ` · ${dif} km por encima: el fondo y la calidad ya pasan el objetivo`
+                      : ` · ${-dif} km por debajo: lo que queda no alcanza para un easy`)}
+                  </div>
+                );
+              })()}
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
                 {week.plan.map((d, i) => <LapCard key={i} day={d} index={i} mode={isViewingLive ? "edit" : "view"} log={week.log[i]} esCoach extras={extrasDelDia(week, i, student, activeWeekNum)} onChangeDay={updateDay} onSwapDay={isViewingLive ? swapDays : undefined} />)}
               </div>

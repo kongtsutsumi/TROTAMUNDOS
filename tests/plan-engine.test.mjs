@@ -1092,6 +1092,169 @@ console.log("\n▸ Traducción de las sesiones al formato de intervals.icu");
 }
 
 // ============================================================
+// TIEMPO OBJETIVO
+// ============================================================
+console.log("\n▸ Lectura del tiempo objetivo");
+{
+  const leer = (t, g) => E.interpretarTiempoObjetivo(t, E.DISTANCE_KM[g]);
+  const min = (t, g) => leer(t, g)?.minutos;
+
+  // El error que motivó esto: en maratón, "3:20" son 3 horas y 20 minutos.
+  check("Maratón 3:20 son 3 h 20 min", Math.abs(min("3:20", "42k") - 200) < 1e-9, String(min("3:20", "42k")));
+  check("Y se dice así", leer("3:20", "42k")?.lectura === "3 h 20 min", leer("3:20", "42k")?.lectura);
+  check("Su ritmo es 4:44/km", E.formatPace(leer("3:20", "42k").ritmo) === "4:44", E.formatPace(leer("3:20", "42k").ritmo));
+  check("Media maratón 1:45 son 1 h 45 min", Math.abs(min("1:45", "21k") - 105) < 1e-9);
+  check("Media maratón 1:05 (élite) son 1 h 05 min", Math.abs(min("1:05", "21k") - 65) < 1e-9);
+  check("Con segundos también: 3:15:00", Math.abs(min("3:15:00", "42k") - 195) < 1e-9);
+  check("Y con segundos sueltos: 3:15:30", Math.abs(min("3:15:30", "42k") - 195.5) < 1e-9);
+
+  // En distancias cortas, dos números son minutos y segundos...
+  check("10K 45:00 son 45 min", Math.abs(min("45:00", "10k") - 45) < 1e-9);
+  check("10K 38:30 son 38 min 30 s", Math.abs(min("38:30", "10k") - 38.5) < 1e-9);
+  check("5K 22:30 son 22 min 30 s", Math.abs(min("22:30", "5k") - 22.5) < 1e-9);
+  // ...salvo que eso dé un ritmo imposible: un 10K en 1:05 es 1 hora y 5 minutos.
+  check("10K 1:05 es 1 h 05 min, no 1 min 5 s", Math.abs(min("1:05", "10k") - 65) < 1e-9, String(min("1:05", "10k")));
+
+  // Lo que no tiene lectura posible se rechaza, en vez de inventar un plan.
+  check("Rechaza un maratón en 45:00:00", leer("45:00:00", "42k") === null);
+  check("Rechaza minutos de 60 o más", leer("3:75", "42k") === null);
+  check("Rechaza texto", leer("tres horas", "42k") === null);
+  check("Rechaza vacío", leer("", "42k") === null && leer(null, "42k") === null);
+  check("Rechaza un solo número", leer("200", "42k") === null);
+}
+
+// ============================================================
+// REPARTO DEL VOLUMEN
+// ============================================================
+console.log("\n▸ Reparto del volumen: fondo y calidad primero, el resto en easy");
+{
+  const semana = () => [
+    { day: "Lun", slot: "easy", paceKey: "E", km: 6, isMondayRecovery: true, type: "Recuperación" },
+    { day: "Mar", slot: "q1", paceKey: "I", km: 12, type: "Intervalos" },
+    { day: "Mié", slot: "easy", paceKey: "E", km: 10, runWalk: true, type: "Run/Walk" },
+    { day: "Jue", slot: "rest", paceKey: "", km: 0, type: "Descanso" },
+    { day: "Vie", slot: "easy", paceKey: "E", km: 8, runWalk: true, type: "Run/Walk" },
+    { day: "Sáb", slot: "q2", paceKey: "T", km: 11, type: "Umbral" },
+    { day: "Dom", slot: "long", paceKey: "long", km: 24, type: "Fondo" },
+  ];
+  const sumaKm = (p) => Math.round(p.reduce((t, d) => t + (d.km || 0), 0) * 10) / 10;
+
+  // Objetivo 75: fijos = 6 + 12 + 11 + 24 = 53 → quedan 22 para Mié y Vie.
+  const r = E.repartirVolumen(semana(), 75);
+  check("La semana cuadra exacta", sumaKm(r.plan) === 75 && r.diferencia === 0, `suma ${sumaKm(r.plan)}`);
+  check("El fondo no se toca", r.plan[6].km === 24);
+  check("La calidad no se toca", r.plan[1].km === 12 && r.plan[5].km === 11);
+  check("El lunes de recuperación no se toca", r.plan[0].km === 6);
+  check("Los easy suben lo mismo y conservan su forma", r.plan[2].km === 12 && r.plan[4].km === 10,
+    `${r.plan[2].km} y ${r.plan[4].km}`);
+
+  // Con poco volumen, un easy pasa a descanso antes que quedar por debajo de 5 km.
+  // Objetivo 61: quedan 8 km. Dos días de 4 no valen; uno de 8 sí.
+  const corto = E.repartirVolumen(semana(), 61);
+  const easys = corto.plan.filter((d) => d.paceKey === "E" && !d.isMondayRecovery);
+  check("Sin presupuesto para dos, queda un solo easy", easys.length === 1, `quedan ${easys.length}`);
+  check("Y ese easy se lleva todo lo que había", easys[0]?.km === 8, `tiene ${easys[0]?.km}`);
+  check("El que menos tenía es el que descansa", corto.plan[4].paceKey === "" && corto.plan[4].type === "Descanso");
+  check("Queda marcado para poder volver", corto.plan[4].descansoPorVolumen === true);
+  check("La semana sigue cuadrando", sumaKm(corto.plan) === 61, `suma ${sumaKm(corto.plan)}`);
+
+  // Si vuelve a sobrar volumen, el día descansado revive como lo que era.
+  const revive = E.repartirVolumen(corto.plan, 75);
+  check("Al sobrar volumen el día vuelve a entrenar", revive.plan[4].paceKey === "E" && revive.plan[4].km >= 5,
+    `${revive.plan[4].paceKey} / ${revive.plan[4].km}`);
+  check("Y vuelve como Run/Walk, que es lo que era", revive.plan[4].runWalk === true && revive.plan[4].type === "Run/Walk",
+    `${revive.plan[4].type}`);
+  check("Ida y vuelta deja la semana igual que al principio",
+    revive.plan[2].km === 12 && revive.plan[4].km === 10, `${revive.plan[2].km} y ${revive.plan[4].km}`);
+
+  // Única excepción: si no alcanza ni para un día de 5, se hace UN easy más corto.
+  const minimo = E.repartirVolumen(semana(), 56.5); // quedan 3,5 km
+  const solos = minimo.plan.filter((d) => d.paceKey === "E" && !d.isMondayRecovery);
+  check("Con menos de 5 km, un único easy corto", solos.length === 1 && solos[0].km === 3.5,
+    solos.map((d) => d.km).join(","));
+  check("Y la semana igual cuadra", sumaKm(minimo.plan) === 56.5);
+
+  // Por debajo de 1 km no se sale a correr: se acepta la diferencia, y se informa.
+  const nada = E.repartirVolumen(semana(), 53.5); // quedan 0,5 km
+  check("Con menos de 1 km no queda ningún easy",
+    nada.plan.filter((d) => d.paceKey === "E" && !d.isMondayRecovery).length === 0);
+  check("Y se informa cuánto faltó", nada.diferencia === 0.5, String(nada.diferencia));
+
+  // Si lo fijo ya supera el objetivo, los easy descansan y se informa el exceso.
+  const exceso = E.repartirVolumen(semana(), 50);
+  check("Si fondo y calidad ya pasan el objetivo, se informa el exceso", exceso.diferencia === -3, String(exceso.diferencia));
+}
+
+console.log("\n▸ Reajuste cuando el coach cambia un día a mano");
+{
+  const base = E.repartirVolumen([
+    { day: "Lun", slot: "rest", paceKey: "", km: 0 },
+    { day: "Mar", slot: "q1", paceKey: "I", km: 12 },
+    { day: "Mié", slot: "easy", paceKey: "E", km: 10, runWalk: true },
+    { day: "Jue", slot: "easy", paceKey: "E", km: 8, runWalk: true },
+    { day: "Vie", slot: "easy", paceKey: "E", km: 8 },
+    { day: "Sáb", slot: "rest", paceKey: "", km: 0 },
+    { day: "Dom", slot: "long", paceKey: "long", km: 24 },
+  ], 62).plan;
+  const total = (p) => Math.round(p.reduce((t, d) => t + (d.km || 0), 0) * 10) / 10;
+
+  // El coach alarga el fondo de 24 a 30: los easy ceden 6 km entre los tres.
+  const fondoMasLargo = base.map((d, i) => (i === 6 ? { ...d, km: 30 } : d));
+  const r = E.repartirVolumen(fondoMasLargo, 62).plan;
+  check("Al alargar el fondo, la semana sigue cuadrando", total(r) === 62, `suma ${total(r)}`);
+  check("El fondo queda como lo puso el coach", r[6].km === 30);
+  check("Los tres easy ceden por igual", r[2].km === 8 && r[3].km === 6 && r[4].km === 6,
+    `${r[2].km}, ${r[3].km}, ${r[4].km}`);
+
+  // Un easy que el coach fijó a mano no se mueve; ajustan los demás.
+  const conFijo = fondoMasLargo.map((d, i) => (i === 2 ? { ...d, km: 10, kmFijado: true } : d));
+  const f = E.repartirVolumen(conFijo, 62).plan;
+  check("El easy fijado a mano no se toca", f[2].km === 10);
+  check("Los otros dos absorben la diferencia", f[3].km === 5 && f[4].km === 5 && total(f) === 62,
+    `${f[3].km}, ${f[4].km}, suma ${total(f)}`);
+
+  // Escribir "1" y luego "30" en el fondo da lo mismo que escribir "30" de una vez.
+  const tecleo1 = E.repartirVolumen(base.map((d, i) => (i === 6 ? { ...d, km: 3 } : d)), 62).plan;
+  const tecleo2 = E.repartirVolumen(tecleo1.map((d, i) => (i === 6 ? { ...d, km: 30 } : d)), 62).plan;
+  check("El resultado no depende de cómo se tecleó",
+    JSON.stringify(tecleo2.map((d) => [d.paceKey, d.km])) === JSON.stringify(r.map((d) => [d.paceKey, d.km])),
+    `${tecleo2.map((d) => d.km).join(",")} vs ${r.map((d) => d.km).join(",")}`);
+}
+
+console.log("\n▸ En todos los planes de carrera ningún easy queda por debajo de 5 km");
+{
+  for (const goal of ["10k", "21k", "42k"]) {
+    for (const level of ["intermedio1", "intermedio2", "avanzado1", "avanzado2"]) {
+      const paceStr = goal === "42k" ? "3:51" : goal === "21k" ? "3:40" : "3:30";
+      const paces = E.computeTrainingPaces(E.computeVDOT(E.DISTANCE_KM[goal], E.parsePaceToDecimal(paceStr)));
+      paces.race = E.parsePaceToDecimal(paceStr);
+      E.anchorPacesToGoal(paces, goal);
+      const peak = { intermedio1: 55, intermedio2: 75, avanzado1: 100, avanzado2: 130 }[level];
+      for (const weeks of [16, 12, 8, 4, 2, 1, 0]) {
+        const { plan, weeklyKm } = E.buildInitialRacePlan(goal, level, peak, E.capLongRunKm(goal, level, 999), weeks, paces);
+        const vol = plan.filter((d) => E.esDiaDeVolumen(d) && d.paceKey === "E");
+        const cortos = vol.filter((d) => d.km < E.VOLUMEN_MIN_KM);
+        // La excepción solo vale si es el ÚNICO día de volumen de la semana.
+        const ok = cortos.length === 0 || (cortos.length === 1 && vol.length === 1);
+        check(`Easy ≥ 5 km: ${goal}/${level}/${weeks}sem`, ok, cortos.map((d) => `${d.day} ${d.km}`).join(", "));
+        // Si lo prioritario (fondo, calidad, lunes) cabe en el objetivo, la semana cuadra.
+        // Si ya lo pasa por sí solo, no se agrega ningún easy encima: el exceso no es del
+        // reparto sino de las sesiones de calidad, que se calculan por su estructura.
+        const total = plan.reduce((t, d) => t + (d.km || 0), 0);
+        const prioritario = plan.filter((d) => !(E.esDiaDeVolumen(d) && d.paceKey === "E")).reduce((t, d) => t + (d.km || 0), 0);
+        if (prioritario <= weeklyKm) {
+          check(`Cuadra con el objetivo: ${goal}/${level}/${weeks}sem`, Math.abs(total - weeklyKm) < 1.05,
+            `suma ${total.toFixed(1)} vs ${weeklyKm}`);
+        } else {
+          check(`Sin easy encima de un exceso: ${goal}/${level}/${weeks}sem`, vol.length === 0,
+            `hay ${vol.length} easy y lo prioritario ya suma ${prioritario}`);
+        }
+      }
+    }
+  }
+}
+
+// ============================================================
 // RESULTADO
 // ============================================================
 console.log("\n" + "─".repeat(52));
