@@ -34,7 +34,7 @@ check("Sin fecha de arranque no se sabe", S.diaDeLaSemana(undefined, 1, "2026-10
 console.log("\n▸ El semáforo");
 {
   let e = S.estadoDeLaSemana(alumno(vacio()), "2026-10-19");
-  check("El lunes sin correr todavía está al día (la de hoy no es falta)", e.tono === "verde" && e.frase === "Al día", JSON.stringify(e));
+  check("Primera semana, el lunes: recién empieza (gris, no verde)", e.tono === "gris" && e.frase === "Semana recién empieza", JSON.stringify(e));
 
   e = S.estadoDeLaSemana(alumno(vacio()), "2026-10-20");
   check("El martes sin la del lunes: le falta 1", e.tono === "amarillo" && e.frase === "Le falta 1 sesión", JSON.stringify(e));
@@ -51,6 +51,26 @@ console.log("\n▸ El semáforo");
 
   e = S.estadoDeLaSemana(alumno(vacio()), "2026-10-17");
   check("Antes del lunes: gris, por empezar", e.tono === "gris" && e.frase === "Semana por empezar");
+
+  // Semana 2 desde el lunes 26/10. La semana 1 quedó con 1 de 4 sesiones.
+  const semana1 = vacio(); semana1[0] = hecho("8");
+  const dosSemanas = (log2, extra1 = {}) => ({ planStartMonday: "2026-10-19", currentWeek: 2,
+    weeks: { 1: { plan, log: semana1, submitted: true, ...extra1 }, 2: { plan, log: log2 } } });
+  e = S.estadoDeLaSemana(dosSemanas(vacio()), "2026-10-26");
+  check("El lunes muestra cómo terminó la semana pasada, no 'al día'",
+    e.tono === "rojo" && e.frase === "Semana pasada: le faltaron 3 sesiones" && e.semana === "pasada", JSON.stringify(e));
+  check("…con sus sesiones y km", S.textoDelDetalle(e) === "Hizo 1 de 4 sesiones · 8 de 40 km", S.textoDelDetalle(e));
+  e = S.estadoDeLaSemana(dosSemanas(vacio()), "2026-10-27");
+  check("El martes ya juzga la semana actual", e.frase === "Le falta 1 sesión" && !e.semana, JSON.stringify(e));
+  e = S.estadoDeLaSemana(dosSemanas(vacio(), { paused: true }), "2026-10-26");
+  check("Si la semana pasada estuvo pausada, lo dice en gris", e.tono === "gris" && e.frase === "Semana pasada: pausada");
+  const completa = plan.map((d) => (d.paceKey ? hecho(String(d.km)) : { completed: false }));
+  const buena = { planStartMonday: "2026-10-19", currentWeek: 2, weeks: { 1: { plan, log: completa }, 2: { plan, log: vacio() } } };
+  e = S.estadoDeLaSemana(buena, "2026-10-26");
+  check("Semana pasada completa: verde", e.tono === "verde" && e.frase === "Semana pasada: completa");
+  const unaFalta = completa.slice(); unaFalta[6] = { completed: false };
+  e = S.estadoDeLaSemana({ ...buena, weeks: { 1: { plan, log: unaFalta }, 2: { plan, log: vacio() } } }, "2026-10-26");
+  check("Semana pasada con 1 falta: amarillo", e.tono === "amarillo" && e.frase === "Semana pasada: le faltó 1 sesión");
 
   e = S.estadoDeLaSemana(alumno(vacio(), { paused: true }), "2026-10-27");
   check("Semana pausada: gris, sin faltas", e.tono === "gris" && e.frase === "Semana pausada");
