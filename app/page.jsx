@@ -5424,11 +5424,13 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
    ROLE SELECT
 --------------------------------------------------------- */
 function RoleSelect({ onSelect }) {
+  // Arriba deja libre la zona de la hora y la batería (app abierta desde la pantalla de
+  // inicio) y además un margen limpio para que el logo respire.
   return (
-    <div className="max-w-2xl mx-auto px-4 py-16">
+    <div className="max-w-2xl mx-auto px-4 pb-16" style={{ paddingTop: "calc(env(safe-area-inset-top) + 5.5rem)" }}>
       <div className="text-center mb-12">
         <img src="/logo.png" alt="Trotamundos" className="mx-auto" style={{ width: "min(320px, 80vw)", height: "auto" }} />
-        <div className="text-sm font-semibold tracking-[0.3em] uppercase mt-1" style={{ color: COLORS.track }}>el app · V.04</div>
+        <div className="text-sm font-semibold tracking-[0.3em] uppercase mt-5" style={{ color: COLORS.track }}>el app · V.05</div>
         <div className="w-16 h-1 mx-auto mt-3 mb-4" style={{ background: COLORS.track }} />
         <p className="text-sm" style={{ color: COLORS.textMuted }}>Tú cumples el plan, tu coach lo diseña semana a semana.</p>
       </div>
