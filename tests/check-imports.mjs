@@ -15,6 +15,9 @@ const ARCHIVOS = [
   "app/api/intervals/route.js",
   "app/api/cron/route.js",
   "app/api/data/route.js",
+  "lib/pagos-servidor.js",
+  "app/api/pagos/route.js",
+  "components/pagos.jsx",
   "app/page.jsx",
 ];
 

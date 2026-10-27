@@ -6,8 +6,9 @@ import { textoDelDetalle } from "../lib/estado-semana.mjs";
 import {
   Users, User, Plus, ArrowLeft, Check, Flag, TrendingUp, TrendingDown,
   Minus, X, ChevronRight, ChevronLeft, ChevronDown, RotateCw, Activity, Search, AlertCircle, Lock, KeyRound,
-  FileText, RefreshCcw, Trash2, BarChart2, Clock, Edit3, Download, QrCode, CalendarDays, Watch, LogOut, Megaphone, Pin, Send, Link2
+  FileText, RefreshCcw, Trash2, BarChart2, Clock, Edit3, Download, QrCode, CalendarDays, Watch, LogOut, Megaphone, Pin, Send, Link2, Home, Wallet
 } from "lucide-react";
+import { useMyMembership, MembershipCard, PagosAlumno, CobrosPanel, MembershipBadge, useMemberships, statusOf } from "../components/pagos";
 import {
   applyIntermediateRaceDayPatch,
   AUTO_PUBLISH_LABEL,
@@ -2693,6 +2694,9 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
   const [newPin, setNewPin] = useState("");
   const [pinMsg, setPinMsg] = useState("");
   const [showMuro, setShowMuro] = useState(false);
+  const [showPagos, setShowPagos] = useState(false);
+  // Vigencia de todos los alumnos: para el panel de pagos y la insignia del listado.
+  const vigencias = useMemberships(true);
   const [pendientesMuro, setPendientesMuro] = useState(0);
   useEffect(() => {
     let vivo = true;
@@ -2911,6 +2915,8 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
   };
   const lowAdherenceCount = roster.filter(isLowCompliance).length;
   const pausedCount = roster.filter((r) => r.paused).length;
+  // Planes por vencer o vencidos: el número del botón Pagos.
+  const pagosUrgentes = vigencias.loaded ? roster.filter((r) => ["por_vencer", "vencido"].includes(statusOf(vigencias, r.id).status)).length : 0;
   let filteredRoster = search.trim() ? roster.filter((r) => r.name.toLowerCase().includes(search.toLowerCase())) : roster;
   if (statusFilter === "waiting") filteredRoster = filteredRoster.filter((r) => r.waitingApproval);
   else if (statusFilter === "low") filteredRoster = filteredRoster.filter(isLowCompliance);
@@ -4017,10 +4023,12 @@ const resetPlan = async () => {
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6">
-      <div className="flex items-center gap-3 mb-6">
+      {/* En el celular el título va en su línea y los botones debajo, en varias filas si
+          hace falta: antes se salían por la derecha y Anuncios o Pagos no se veían. */}
+      <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-6">
         <button onClick={onBack} className="p-2 rounded-lg" style={{ color: COLORS.textMuted }}><ArrowLeft size={18} /></button>
         <Users size={20} style={{ color: COLORS.track }} />
-        <h1 className="text-xl font-semibold tracking-wide flex-1" style={{ fontFamily: "'Oswald', sans-serif", color: COLORS.textPrimary }}>PANEL DEL COACH</h1>
+        <h1 className="text-xl font-semibold tracking-wide flex-1 whitespace-nowrap basis-[calc(100%-5rem)] sm:basis-auto" style={{ fontFamily: "'Oswald', sans-serif", color: COLORS.textPrimary }}>PANEL DEL COACH</h1>
         <button onClick={exportBackup} disabled={busy}
           className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold"
           style={{ background: COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
@@ -4058,7 +4066,24 @@ const resetPlan = async () => {
             </span>
           )}
         </button>
+        <button onClick={() => { setShowPagos((v) => !v); vigencias.reload(); }}
+          className="relative flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold"
+          style={{ background: showPagos ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
+          <Wallet size={14} /> Pagos
+          {pagosUrgentes > 0 && (
+            <span className="absolute -top-1.5 -right-1.5 rounded-full text-[10px] font-bold flex items-center justify-center"
+              style={{ width: 18, height: 18, background: COLORS.track, color: COLORS.lane }}>
+              {pagosUrgentes}
+            </span>
+          )}
+        </button>
       </div>
+
+      {showPagos && (
+        <div className="mb-6">
+          <CobrosPanel roster={roster} data={vigencias} reload={vigencias.reload} />
+        </div>
+      )}
 
       {showMuro && (
         <div className="mb-6">
@@ -4320,6 +4345,7 @@ const resetPlan = async () => {
                   <EstadoDeLaSemana estado={rosterProgress[r.id]?.estado} />
                 </div>
                 <div className="flex items-center gap-2 shrink-0 ml-2">
+                  {vigencias.loaded && statusOf(vigencias, r.id).status !== "vigente" && <MembershipBadge st={statusOf(vigencias, r.id)} />}
                   {rosterProgress[r.id]?.autoPublished && (
                     <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded" title="La semana se publicó automáticamente y todavía no la revisaste"
                       style={{ background: COLORS.moderate + "22", color: COLORS.moderate, border: `1px solid ${COLORS.moderate}66` }}>
@@ -4754,10 +4780,13 @@ function MuroAnuncios({ esCoach, onLeido }) {
 }
 
 // Las cuatro pestañas de la barra inferior del alumno. El reloj vive dentro de Perfil.
+// Barra del alumno, como en Chrono Runners: el plan va al medio, como botón principal.
+// El progreso vive dentro de Plan, debajo de la semana.
 const PESTANAS_ALUMNO = [
-  { id: "semana", etiqueta: "Semana", Icono: CalendarDays },
-  { id: "progreso", etiqueta: "Progreso", Icono: BarChart2 },
+  { id: "inicio", etiqueta: "Inicio", Icono: Home },
   { id: "anuncios", etiqueta: "Anuncios", Icono: Megaphone },
+  { id: "semana", etiqueta: "Plan", Icono: Activity, centro: true },
+  { id: "pagos", etiqueta: "Pagos", Icono: Wallet },
   { id: "perfil", etiqueta: "Perfil", Icono: User },
 ];
 
@@ -4771,7 +4800,9 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
 
   // Pestaña activa de la barra inferior. Al cambiar de pestaña se vuelve arriba, como en
   // cualquier app: si no, se aterriza a media página de la sección anterior.
-  const [pestana, setPestana] = useState("semana");
+  const [pestana, setPestana] = useState("inicio");
+  // Vigencia del plan y pagos (una sola petición para Inicio y Pagos).
+  const miPlan = useMyMembership();
   // Cuántas publicaciones del muro tiene sin leer: se mira al entrar y cada minuto.
   const [pendientesMuro, setPendientesMuro] = useState(0);
   useEffect(() => {
@@ -5009,6 +5040,70 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
 
       {!student && <p className="text-sm" style={{ color: COLORS.textMuted }}>Cargando…</p>}
 
+      {student && pestana === "inicio" && (
+        <div className="space-y-3" data-testid="inicio-alumno">
+          <div className="mb-1">
+            <div className="text-[13px] first-letter:uppercase" style={{ color: COLORS.textMuted }}>
+              {new Intl.DateTimeFormat("es-PE", { weekday: "long", day: "numeric", month: "long", timeZone: "America/Lima" }).format(new Date())}
+            </div>
+            <h1 className="text-2xl font-bold uppercase leading-tight" style={{ fontFamily: "'Oswald', sans-serif", color: COLORS.textPrimary }}>
+              Hola, {(student.name || "").trim().split(/\s+/)[0]}
+            </h1>
+          </div>
+          {pendientesMuro > 0 && (
+            <button onClick={() => irA("anuncios")} className="w-full rounded-2xl p-4 flex items-center gap-3 text-left"
+              style={{ background: COLORS.track + "1A", border: `1px solid ${COLORS.track}66` }}>
+              <Megaphone size={20} style={{ color: COLORS.track }} />
+              <span className="flex-1 text-sm font-semibold" style={{ color: COLORS.textPrimary }}>
+                {pendientesMuro === 1 ? "Tienes 1 anuncio nuevo" : `Tienes ${pendientesMuro} anuncios nuevos`}
+              </span>
+              <ChevronRight size={16} style={{ color: COLORS.track }} />
+            </button>
+          )}
+          {currentWeekData && submitSlots.length > 0 && (
+            <div className="rounded-2xl p-4" style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}` }}>
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <span className="text-[11px] font-bold uppercase tracking-[0.12em]" style={{ color: COLORS.textMuted }}>Esta semana</span>
+                <span className="text-sm" style={{ color: COLORS.textMuted }}>{submitCompletedCount} de {submitSlots.length} sesiones</span>
+              </div>
+              <div className="flex gap-1.5 mb-3">
+                {submitSlots.map((x) => (
+                  <span key={x.i} className="flex-1 h-2 rounded-full" style={{ background: currentWeekData.log[x.i]?.completed ? COLORS.easy : COLORS.border }} />
+                ))}
+              </div>
+              {currentWeekData.plan?.[todayDowIndex]?.paceKey ? (
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-[11px] font-bold uppercase tracking-[0.12em]" style={{ color: COLORS.textMuted }}>Hoy</div>
+                    <div className="text-base font-semibold" style={{ fontFamily: "'Oswald', sans-serif", color: COLORS.textPrimary }}>
+                      {currentWeekData.plan[todayDowIndex].type}{currentWeekData.plan[todayDowIndex].km ? ` · ${currentWeekData.plan[todayDowIndex].km} km` : ""}
+                    </div>
+                  </div>
+                  {currentWeekData.log?.[todayDowIndex]?.completed ? (
+                    <span className="text-xs font-bold px-2 py-1 rounded-full" style={{ background: COLORS.easy + "22", color: COLORS.easy }}>Hecha</span>
+                  ) : (
+                    <span className="text-xs font-bold px-2 py-1 rounded-full" style={{ background: COLORS.track + "22", color: COLORS.track }}>Pendiente</span>
+                  )}
+                </div>
+              ) : (
+                <div className="text-sm" style={{ color: COLORS.textMuted }}>Hoy toca descanso.</div>
+              )}
+              <button onClick={() => irA("semana")} className="mt-3 text-sm font-semibold inline-flex items-center gap-0.5" style={{ color: COLORS.track }}>
+                Ver mi plan <ChevronRight size={15} />
+              </button>
+            </div>
+          )}
+          <MembershipCard data={miPlan.data} onMore={() => irA("pagos")} />
+        </div>
+      )}
+
+      {student && pestana === "pagos" && (
+        <div>
+          <h2 className="text-lg font-semibold mb-3" style={{ fontFamily: "'Oswald', sans-serif", color: COLORS.textPrimary }}>Pagos</h2>
+          <PagosAlumno data={miPlan.data} />
+        </div>
+      )}
+
       {pestana === "semana" && needsYesterdayConfirm && (
         <div className="rounded-xl p-4 mb-4" style={{ background: COLORS.moderate + "18", border: `1px solid ${COLORS.moderate}55` }}>
           <p className="text-sm font-semibold mb-1" style={{ color: COLORS.textPrimary }}>
@@ -5214,8 +5309,8 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
         </div>
       )}
 
-      {student && pestana === "progreso" && (
-        <div className="space-y-4">
+      {student && pestana === "semana" && (
+        <div className="mt-6 space-y-3">
           <h2 className="text-lg font-semibold" style={{ fontFamily: "'Oswald', sans-serif", color: COLORS.textPrimary }}>Tu progreso</h2>
           <ProgressChart student={student} activeWeekNum={activeWeekNum} />
         </div>
@@ -5270,17 +5365,39 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
       {student && liveTrainingDayIdx == null && (
         <nav className="fixed bottom-0 inset-x-0 z-40"
           style={{ background: COLORS.surface, borderTop: `1px solid ${COLORS.border}`, paddingBottom: "env(safe-area-inset-bottom)" }}>
-          <div className="max-w-4xl mx-auto grid grid-cols-4">
-            {PESTANAS_ALUMNO.map(({ id, etiqueta, Icono }) => {
+          <div className="max-w-4xl mx-auto grid grid-cols-5 items-end">
+            {PESTANAS_ALUMNO.map(({ id, etiqueta, Icono, centro }) => {
               const activa = pestana === id;
+              const sesionPendienteHoy = !!(currentWeekData?.plan?.[todayDowIndex]?.paceKey && !currentWeekData?.log?.[todayDowIndex]?.completed && !currentWeekData?.paused);
+              const pagoUrgente = ["por_vencer", "vencido"].includes(miPlan.data?.status?.status);
+              const punto = (id === "anuncios" && pendientesMuro > 0) || (id === "pagos" && pagoUrgente) || (id === "semana" && sesionPendienteHoy);
+              if (centro) {
+                // Botón principal: un círculo grande que sobresale de la barra.
+                return (
+                  <button key={id} type="button" onClick={() => irA(id)} aria-current={activa ? "page" : undefined} aria-label={etiqueta}
+                    className="flex flex-col items-center gap-1 pb-2 -mt-6 text-[11px] font-semibold"
+                    style={{ color: activa ? COLORS.textPrimary : COLORS.textMuted }}>
+                    <span className="relative flex items-center justify-center rounded-full transition-transform active:scale-95"
+                      style={{ width: 60, height: 60, background: COLORS.track, color: COLORS.lane, border: `4px solid ${COLORS.bg}`,
+                        boxShadow: activa ? `0 6px 18px ${COLORS.track}77` : "0 4px 12px rgba(0,0,0,0.45)" }}>
+                      <Icono size={26} strokeWidth={2.3} />
+                      {punto && (
+                        <span className="absolute rounded-full" aria-label="Tienes una sesión pendiente hoy"
+                          style={{ top: 2, right: 2, width: 11, height: 11, background: COLORS.lane, border: `2px solid ${COLORS.track}` }} />
+                      )}
+                    </span>
+                    {etiqueta}
+                  </button>
+                );
+              }
               return (
                 <button key={id} type="button" onClick={() => irA(id)} aria-current={activa ? "page" : undefined}
                   className="flex flex-col items-center justify-center gap-1 py-2 text-[11px] font-medium"
                   style={{ color: activa ? COLORS.track : COLORS.textMuted, minHeight: 58 }}>
                   <span className="relative">
                     <Icono size={22} strokeWidth={activa ? 2.4 : 1.8} />
-                    {id === "anuncios" && pendientesMuro > 0 && (
-                      <span className="absolute -top-0.5 -right-1 rounded-full" aria-label="Hay anuncios nuevos"
+                    {punto && (
+                      <span className="absolute -top-0.5 -right-1 rounded-full" aria-label={id === "pagos" ? "Tu plan está por vencer" : "Hay anuncios nuevos"}
                         style={{ width: 10, height: 10, background: COLORS.track, border: `2px solid ${COLORS.surface}` }} />
                     )}
                   </span>
