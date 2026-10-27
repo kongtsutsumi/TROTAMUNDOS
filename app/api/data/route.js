@@ -5,6 +5,7 @@ import { verifySessionToken, SESSION_COOKIE } from "../../../lib/session";
 import { canRead, canWrite, canDelete, sanitizeForSession } from "../../../lib/permissions";
 import { publishDueWeekFor, sanitizeLocalDate } from "../../../lib/autoPublish";
 import { reenviarSemanasCambiadas } from "../../../lib/intervals-push";
+import { estadoDeLaSemana } from "../../../lib/estado-semana.mjs";
 
 async function getSession() {
   const store = await cookies();
@@ -181,6 +182,7 @@ export async function POST(request) {
     const roster = (await kvGet("roster")) || [];
     const records = await Promise.all(roster.map((r) => kvGet(`student:${r.id}`)));
     const summary = {};
+    const hoy = hoyEnLima();
     roster.forEach((r, i) => {
       const s = records[i];
       if (!s) return;
@@ -218,6 +220,8 @@ export async function POST(request) {
               ultimoEnvio: s.intervals?.ultimoEnvio?.fecha ?? null,
             }
           : null,
+        // Semáforo de la semana actual para el listado: "Al día", "Le falta 1 sesión"…
+        estado: estadoDeLaSemana(s, hoy),
         compliance: sTotal ? {
           weeks: closed.length, sessionsDone: sDone, sessionsTotal: sTotal,
           sessionsPct: sDone / sTotal,

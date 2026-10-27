@@ -2,6 +2,7 @@
 import { safeGet, safeSet, safeDelete, safeGetWithRetry, updateRosterEntry, fetchRosterSummary, intervalsOp, muroOp, safeGetPersonal, safeSetPersonal, safeDeletePersonal, authStatus, coachSetup, coachLogin, studentList, studentLogin, logout } from "../lib/storage";
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { fusionarLoDelReloj, extrasDelDia, kmAdicionalesDe } from "../lib/intervals-read.mjs";
+import { textoDelDetalle } from "../lib/estado-semana.mjs";
 import {
   Users, User, Plus, ArrowLeft, Check, Flag, TrendingUp, TrendingDown,
   Minus, X, ChevronRight, ChevronLeft, ChevronDown, RotateCw, Activity, Search, AlertCircle, Lock, KeyRound,
@@ -1153,30 +1154,20 @@ function PrintableWeek({ student, week, weekNum }) {
     </div>
   );
 }
-// Muestra el cumplimiento reciente en dos datos separados: sesiones hechas y volumen
-// corrido. Antes se combinaban en un solo porcentaje, lo que ocultaba la diferencia entre
-// "faltó a una sesión" y "las hizo todas pero más cortas".
-function AdherenceBadge({ compliance }) {
-  if (!compliance) return <Pill color={COLORS.textMuted}>Sin datos</Pill>;
-  const { sessionsDone, sessionsTotal, sessionsPct, volumePct, weeks } = compliance;
-  const sColor = sessionsPct >= 0.9 ? COLORS.easy : sessionsPct < 0.7 ? COLORS.track : COLORS.moderate;
-  const vPctNum = volumePct != null ? Math.round(volumePct * 100) : null;
-  const vColor = vPctNum == null ? COLORS.textMuted
-    : vPctNum >= 90 && vPctNum <= 110 ? COLORS.easy
-    : vPctNum < 75 || vPctNum > 125 ? COLORS.track : COLORS.moderate;
-  const title = `Últimas ${weeks} semana${weeks === 1 ? "" : "s"}: ${sessionsDone} de ${sessionsTotal} sesiones`
-    + (vPctNum != null ? ` · ${vPctNum}% del volumen planificado` : " · sin km registrados");
+// Semáforo de la semana actual en el listado del coach: un punto de color, una frase en
+// palabras y, debajo, lo hecho contra lo planificado de toda la semana.
+const TONO_DEL_ESTADO = { verde: COLORS.easy, amarillo: COLORS.moderate, rojo: COLORS.track, gris: COLORS.textMuted };
+function EstadoDeLaSemana({ estado }) {
+  if (!estado) return null;
+  const color = TONO_DEL_ESTADO[estado.tono] || COLORS.textMuted;
   return (
-    <span className="inline-flex items-center gap-1.5" title={title}>
-      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold"
-        style={{ background: sColor + "22", color: sColor, border: `1px solid ${sColor}55` }}>
-        {sessionsDone}/{sessionsTotal}
-      </span>
-      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold"
-        style={{ background: vColor + "22", color: vColor, border: `1px solid ${vColor}55` }}>
-        {vPctNum != null ? `${vPctNum}%` : "— km"}
-      </span>
-    </span>
+    <div className="mt-2">
+      <div className="flex items-center gap-1.5 text-xs font-semibold" style={{ color }}>
+        <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: 999, background: color, flexShrink: 0 }} />
+        {estado.frase}
+      </div>
+      <div className="text-xs mt-0.5 pl-[14px]" style={{ color: COLORS.textMuted }}>{textoDelDetalle(estado)}</div>
+    </div>
   );
 }
 
@@ -2701,7 +2692,6 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
   const [interRaceDate, setInterRaceDate] = useState("");
   const [newPin, setNewPin] = useState("");
   const [pinMsg, setPinMsg] = useState("");
-  const [showReports, setShowReports] = useState(false);
   const [showMuro, setShowMuro] = useState(false);
   const [pendientesMuro, setPendientesMuro] = useState(0);
   useEffect(() => {
@@ -2714,7 +2704,6 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
     const t = setInterval(mirar, 60000);
     return () => { vivo = false; clearInterval(t); };
   }, []);
-  const [reports, setReports] = useState([]);
   const [showPaceAlerts, setShowPaceAlerts] = useState(false);
   const [showQR, setShowQR] = useState(false);
   const [showKmSummary, setShowKmSummary] = useState(false);
@@ -2777,7 +2766,6 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
     return () => { activo = false; };
   }, [selectedId]);
 
-  useEffect(() => { if (showReports) safeGet("reports").then((r) => setReports(r || [])); }, [showReports]);
   const loadPaceAlerts = useCallback(() => { safeGet("paceAlerts").then((a) => setPaceAlerts(a || [])); }, []);
   useEffect(() => { loadPaceAlerts(); }, [loadPaceAlerts]);
   useEffect(() => { if (showPaceAlerts) loadPaceAlerts(); }, [showPaceAlerts, loadPaceAlerts]);
@@ -3484,6 +3472,13 @@ const resetPlan = async () => {
     setBusy(false);
   };
 
+  // Al abrir un alumno, su nombre sube al borde de la pantalla: la ficha que estaba abierta
+  // se cierra y, sin esto, el nombre elegido podría quedar fuera de la vista.
+  useEffect(() => {
+    if (!selectedId || typeof document === "undefined") return;
+    const t = setTimeout(() => document.getElementById(`alumno-${selectedId}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+    return () => clearTimeout(t);
+  }, [selectedId]);
   const [viewedWeek, setViewedWeek] = useState(null);
   useEffect(() => { setViewedWeek(null); }, [student?.currentWeek]);
   const activeWeekNum = viewedWeek ?? (student ? student.currentWeek : null);
@@ -3491,360 +3486,9 @@ const resetPlan = async () => {
   const isViewingLive = !student || activeWeekNum === student.currentWeek;
   const panoramaData = student ? projectWeeklyVolumes(student) : { kind: "flat", rows: [] };
 
-  return (
-    <div className="max-w-6xl mx-auto px-4 py-6">
-      <div className="flex items-center gap-3 mb-6">
-        <button onClick={onBack} className="p-2 rounded-lg" style={{ color: COLORS.textMuted }}><ArrowLeft size={18} /></button>
-        <Users size={20} style={{ color: COLORS.track }} />
-        <h1 className="text-xl font-semibold tracking-wide flex-1" style={{ fontFamily: "'Oswald', sans-serif", color: COLORS.textPrimary }}>PANEL DEL COACH</h1>
-        <button onClick={exportBackup} disabled={busy}
-          className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold"
-          style={{ background: COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
-          <Download size={14} /> Respaldo
-        </button>
-        <button onClick={() => setShowQR((v) => !v)}
-          className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold"
-          style={{ background: showQR ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
-          <QrCode size={14} /> Código QR
-        </button>
-        <button onClick={async () => { const next = !showDailyActivity; setShowDailyActivity(next); if (next && !dailyActivity) await loadDailyActivity(); }}
-          className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold"
-          style={{ background: showDailyActivity ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
-          <Activity size={14} /> Actividad diaria
-        </button>
-        <button onClick={() => setShowPaceAlerts((v) => !v)}
-          className="relative flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold"
-          style={{ background: showPaceAlerts ? COLORS.moderate : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
-          <AlertCircle size={14} /> Ajustes de ritmo
-          {pendingAlertsCount > 0 && (
-            <span className="absolute -top-1.5 -right-1.5 rounded-full text-[10px] font-bold flex items-center justify-center"
-              style={{ width: 18, height: 18, background: COLORS.track, color: COLORS.lane }}>
-              {pendingAlertsCount}
-            </span>
-          )}
-        </button>
-        <button onClick={() => setShowReports((v) => !v)}
-          className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold"
-          style={{ background: showReports ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
-          <FileText size={14} /> Reportes
-        </button>
-        <button onClick={() => setShowMuro((v) => !v)}
-          className="relative flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold"
-          style={{ background: showMuro ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
-          <Megaphone size={14} /> Anuncios
-          {pendientesMuro > 0 && (
-            <span className="absolute -top-1.5 -right-1.5 rounded-full text-[10px] font-bold flex items-center justify-center"
-              style={{ width: 18, height: 18, background: COLORS.track, color: COLORS.lane }}>
-              {pendientesMuro}
-            </span>
-          )}
-        </button>
-      </div>
-
-      {showMuro && (
-        <div className="mb-6">
-          <div className="text-sm font-semibold mb-3" style={{ color: COLORS.textPrimary, fontFamily: "'Oswald', sans-serif" }}>ANUNCIOS</div>
-          <MuroAnuncios esCoach onLeido={() => setPendientesMuro(0)} />
-        </div>
-      )}
-
-      {showQR && (
-        <div className="rounded-xl p-4 mb-6" style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}` }}>
-          <div className="text-sm font-semibold mb-2" style={{ color: COLORS.textPrimary, fontFamily: "'Oswald', sans-serif" }}>CÓDIGO QR</div>
-          <p className="text-xs mb-3" style={{ color: COLORS.textMuted }}>
-            Pega aquí el enlace publicado de esta app (el que compartes con tus alumnos) para generar un código QR que puedan escanear en vez de escribir la URL.
-          </p>
-          <input type="text" placeholder="https://claude.ai/..." value={qrUrl} onChange={(e) => setQrUrl(e.target.value)}
-            className="w-full rounded-lg px-3 py-2 text-sm mb-3" style={{ background: COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }} />
-          {qrUrl.trim() && (
-            <div className="flex flex-col items-start gap-2">
-              <QRCodeSVG text={qrUrl.trim()} size={220} />
-              <p className="text-[10px]" style={{ color: COLORS.textMuted }}>
-                Generado directamente en la app, sin depender de internet ni de ningún servicio externo.
-              </p>
-            </div>
-          )}
-        </div>
-      )}
-
-      {showDailyActivity && (() => {
-        let filteredActivity = dailyActivity || [];
-        if (activityStudentFilter) filteredActivity = filteredActivity.filter((r) => r.studentName === activityStudentFilter);
-        if (activityDateFrom) { const from = new Date(activityDateFrom + "T00:00:00"); filteredActivity = filteredActivity.filter((r) => r.date >= from); }
-        if (activityDateTo) { const to = new Date(activityDateTo + "T23:59:59"); filteredActivity = filteredActivity.filter((r) => r.date <= to); }
-        const groups = [];
-        filteredActivity.forEach((row) => {
-          const key = row.date.toDateString();
-          let g = groups.find((x) => x.key === key);
-          if (!g) { g = { key, date: row.date, rows: [] }; groups.push(g); }
-          g.rows.push(row);
-        });
-        const studentNames = [...new Set(roster.map((r) => r.name))].sort();
-        return (
-          <div className="rounded-xl p-4 mb-6" style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}` }}>
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-sm font-semibold" style={{ color: COLORS.textPrimary, fontFamily: "'Oswald', sans-serif" }}>ACTIVIDAD DIARIA — TODOS LOS ALUMNOS</div>
-              <button onClick={loadDailyActivity} disabled={loadingActivity} className="text-xs underline" style={{ color: COLORS.textMuted }}>
-                {loadingActivity ? "Actualizando…" : "Actualizar"}
-              </button>
-            </div>
-            <p className="text-xs mb-3" style={{ color: COLORS.textMuted }}>
-              Sesiones que tus alumnos ya marcaron como completadas, de más reciente a más antigua — sin esperar a que termine la semana.
-            </p>
-            <div className="flex flex-wrap gap-2 mb-3">
-              <select value={activityStudentFilter} onChange={(e) => setActivityStudentFilter(e.target.value)}
-                className="rounded-lg px-2 py-1.5 text-xs" style={{ background: COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
-                <option value="">Todos los alumnos</option>
-                {studentNames.map((n) => <option key={n} value={n}>{n}</option>)}
-              </select>
-              <div className="flex items-center gap-1">
-                <label className="text-xs" style={{ color: COLORS.textMuted }}>Desde</label>
-                <input type="date" value={activityDateFrom} onChange={(e) => setActivityDateFrom(e.target.value)}
-                  className="rounded-lg px-2 py-1.5 text-xs" style={{ background: COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }} />
-              </div>
-              <div className="flex items-center gap-1">
-                <label className="text-xs" style={{ color: COLORS.textMuted }}>Hasta</label>
-                <input type="date" value={activityDateTo} onChange={(e) => setActivityDateTo(e.target.value)}
-                  className="rounded-lg px-2 py-1.5 text-xs" style={{ background: COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }} />
-              </div>
-              {(activityStudentFilter || activityDateFrom || activityDateTo) && (
-                <button onClick={() => { setActivityStudentFilter(""); setActivityDateFrom(""); setActivityDateTo(""); }}
-                  className="text-xs underline" style={{ color: COLORS.textMuted }}>
-                  Quitar filtros
-                </button>
-              )}
-            </div>
-            {loadingActivity && <p className="text-sm" style={{ color: COLORS.textMuted }}>Cargando…</p>}
-            {!loadingActivity && groups.length === 0 && <p className="text-sm" style={{ color: COLORS.textMuted }}>No hay sesiones para mostrar con estos filtros.</p>}
-            <div className="space-y-4 max-h-[32rem] overflow-y-auto">
-              {groups.map((g) => (
-                <div key={g.key}>
-                  <div className="text-xs font-semibold uppercase tracking-wide mb-1.5" style={{ color: COLORS.track }}>
-                    {DAYS[(g.date.getDay() + 6) % 7]} {String(g.date.getDate()).padStart(2, "0")}/{String(g.date.getMonth() + 1).padStart(2, "0")}
-                  </div>
-                  <div className="space-y-1.5">
-                    {g.rows.map((r, i) => (
-                      <div key={i} className="rounded-lg p-2.5 text-sm" style={{ background: COLORS.surface2 }}>
-                        <div className="flex items-center justify-between flex-wrap gap-1">
-                          <span className="font-semibold" style={{ color: COLORS.textPrimary }}>{r.studentName}</span>
-                          <span style={{ color: COLORS.textMuted }}>{r.type}</span>
-                        </div>
-                        <div className="flex items-center gap-3 text-xs mt-1 flex-wrap" style={{ color: COLORS.textMuted }}>
-                          <span>{r.actualKm} km{r.actualKm !== r.plannedKm ? ` (plan: ${r.plannedKm} km)` : ""}</span>
-                          {r.rpe != null && <span>RPE {r.rpe}</span>}
-                        </div>
-                        {r.note && <p className="text-xs mt-1 italic" style={{ color: COLORS.textMuted }}>"{r.note}"</p>}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        );
-      })()}
-
-      {showPaceAlerts && (
-        <div className="rounded-xl p-4 mb-6" style={{ background: COLORS.surface, border: `1px solid ${COLORS.moderate}` }}>
-          <div className="text-sm font-semibold mb-3" style={{ color: COLORS.textPrimary, fontFamily: "'Oswald', sans-serif" }}>AJUSTES DE RITMO SUGERIDOS</div>
-          <p className="text-xs mb-4" style={{ color: COLORS.textMuted }}>
-            Se generan cuando un alumno falla el ritmo objetivo (10-15+ seg/km más lento) en martes y/o jueves. Revisa la nota del alumno antes de decidir.
-          </p>
-          <div className="space-y-2">
-            {paceAlerts.filter((a) => a.status === "pending").length === 0 && (
-              <p className="text-sm" style={{ color: COLORS.textMuted }}>No hay ajustes pendientes.</p>
-            )}
-            {paceAlerts.filter((a) => a.status === "pending").slice().reverse().map((a) => (
-              <div key={a.id} className="rounded-lg p-3" style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}` }}>
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <div className="text-sm font-semibold" style={{ color: COLORS.textPrimary }}>{a.studentName} · Semana {a.weekNumber}</div>
-                  <Pill color={COLORS.moderate}>
-                    {a.trigger === "general" ? "Ajuste general (martes y jueves)" : a.trigger === "q1" ? "Solo martes" : "Solo jueves"}
-                  </Pill>
-                </div>
-                <div className="text-xs mt-2 space-y-1" style={{ color: COLORS.textMuted }}>
-                  {a.q1TargetPace != null && (
-                    <div>Martes: objetivo {formatPace(a.q1TargetPace)}/km, real {a.q1ActualPace || "—"}/km{a.q1Note ? ` · Nota: "${a.q1Note}"` : ""}</div>
-                  )}
-                  {a.q2TargetPace != null && (
-                    <div>Jueves: objetivo {formatPace(a.q2TargetPace)}/km, real {a.q2ActualPace || "—"}/km{a.q2Note ? ` · Nota: "${a.q2Note}"` : ""}</div>
-                  )}
-                </div>
-                <div className="flex gap-2 mt-3">
-                  <button onClick={() => resolvePaceAlert(a, true)} disabled={busy}
-                    className="px-3 py-1.5 rounded text-xs font-semibold" style={{ background: COLORS.track, color: COLORS.lane }}>
-                    Aplicar ajuste
-                  </button>
-                  <button onClick={() => resolvePaceAlert(a, false)} disabled={busy}
-                    className="px-3 py-1.5 rounded text-xs" style={{ color: COLORS.textMuted }}>
-                    Descartar (fue algo puntual)
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {showReports ? (
-        <div className="rounded-xl p-4" style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}` }}>
-          <div className="text-sm font-semibold mb-3" style={{ color: COLORS.textPrimary, fontFamily: "'Oswald', sans-serif" }}>REPORTES SEMANALES</div>
-          <p className="text-xs mb-4" style={{ color: COLORS.textMuted }}>Se genera un reporte cada vez que se cierra una semana. No llega por correo ni notificación push.</p>
-          <div className="space-y-2">
-            {reports.length === 0 && <p className="text-sm" style={{ color: COLORS.textMuted }}>Aún no hay reportes semanales.</p>}
-            {reports.slice().sort((a, b) => new Date(b.closedAt) - new Date(a.closedAt)).map((r) => (
-              <div key={r.id} className="rounded-lg p-3" style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}` }}>
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <div className="text-sm font-semibold" style={{ color: COLORS.textPrimary }}>{r.studentName} · Semana {r.weekNumber}</div>
-                  <AdherenceBadge pct={r.adherencePct} />
-                </div>
-                <div className="text-xs mt-1" style={{ color: COLORS.textMuted }}>{PHASE_LABEL[r.phase] || r.phase} · {r.weeklyKm} km{r.avgRpe ? ` · RPE prom. ${r.avgRpe.toFixed(1)}` : ""}</div>
-                <div className="text-xs mt-2" style={{ color: COLORS.textMuted }}>{r.note}</div>
-                <div className="text-[10px] mt-2" style={{ color: COLORS.textMuted }}>{new Date(r.closedAt).toLocaleString("es-PE")}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : (
-      <div className="space-y-6">
-        <div>
-          <button onClick={() => setShowAdd((v) => !v)}
-            className="w-full mb-3 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold"
-            style={{ background: COLORS.track, color: COLORS.lane }}>
-            <Plus size={16} /> Añadir alumno
-          </button>
-          {showAdd && <AddStudentForm onCancel={() => setShowAdd(false)} onCreate={createStudent} />}
-          {pendingCreate && (
-            <div className="rounded-xl p-4 mb-4" style={{ background: COLORS.moderate + "18", border: `1px solid ${COLORS.moderate}` }}>
-              <div className="flex items-center gap-2 mb-2">
-                <AlertCircle size={16} style={{ color: COLORS.moderate }} />
-                <span className="text-sm font-semibold" style={{ color: COLORS.textPrimary }}>El plan inicial tiene algo que revisar</span>
-              </div>
-              <ul className="text-xs mb-3 space-y-1 list-disc pl-4" style={{ color: COLORS.textMuted }}>
-                {pendingCreate.warnings.map((w, i) => <li key={i}>{w}</li>)}
-              </ul>
-              <div className="flex gap-2">
-                <button onClick={() => createStudent({ ...pendingCreate.args, forceCreate: true })} disabled={busy}
-                  className="px-3 py-1.5 rounded text-xs font-semibold" style={{ background: COLORS.moderate, color: COLORS.bg }}>
-                  Crear de todas formas
-                </button>
-                <button onClick={() => setPendingCreate(null)} className="px-3 py-1.5 rounded text-xs" style={{ color: COLORS.textMuted }}>
-                  Cancelar
-                </button>
-              </div>
-            </div>
-          )}
-
-          {roster.length > 0 && (
-            <div className="flex flex-wrap gap-2 mb-3">
-              <button onClick={loadRosterProgress} title="Actualizar progreso semanal de todos los alumnos"
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold"
-                style={{ background: COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
-                <RefreshCcw size={12} /> Actualizar progreso
-              </button>
-              <button onClick={() => setStatusFilter(statusFilter === "waiting" ? null : "waiting")}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold"
-                style={{
-                  background: (statusFilter === "waiting" || waitingCount > 0) ? COLORS.track : COLORS.surface2,
-                  color: COLORS.lane,
-                  border: `1px solid ${COLORS.track}${waitingCount > 0 ? "" : "55"}`,
-                  boxShadow: waitingCount > 0 ? `0 0 0 3px ${COLORS.track}22` : "none",
-                }}>
-                <Clock size={12} /> {waitingCount} esperando aprobación
-              </button>
-              <button onClick={() => setStatusFilter(statusFilter === "low" ? null : "low")}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold"
-                style={{ background: statusFilter === "low" ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.track}55` }}>
-                <TrendingDown size={12} /> {lowAdherenceCount} con adherencia baja
-              </button>
-              <button onClick={() => setStatusFilter(statusFilter === "paused" ? null : "paused")}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold"
-                style={{ background: statusFilter === "paused" ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.track}55` }}>
-                ⏸ {pausedCount} pausados
-              </button>
-              <select value={goalFilter} onChange={(e) => setGoalFilter(e.target.value)}
-                className="px-3 py-1.5 rounded-full text-xs font-semibold" style={{ background: goalFilter ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.track}55` }}>
-                <option value="">Todos los objetivos</option>
-                {GOALS.map((g) => <option key={g.id} value={g.id}>{g.label}</option>)}
-              </select>
-              {(statusFilter || goalFilter) && (
-                <button onClick={() => { setStatusFilter(null); setGoalFilter(""); }} className="text-xs underline" style={{ color: COLORS.textMuted }}>
-                  Quitar filtro
-                </button>
-              )}
-            </div>
-          )}
-
-          <div className="relative mb-3">
-            <Search size={16} style={{ position: "absolute", left: 12, top: 12, color: COLORS.textMuted }} />
-            <input type="text" placeholder="Busca un alumno por nombre" value={search} onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-9 pr-3 py-2.5 rounded-lg text-sm" style={{ background: COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }} />
-          </div>
-
-          <div className="space-y-2">
-            {roster.length === 0 && <p className="text-sm px-1" style={{ color: COLORS.textMuted }}>Aún no tienes alumnos registrados.</p>}
-            {roster.length > 0 && filteredRoster.length === 0 && <p className="text-sm px-1" style={{ color: COLORS.textMuted }}>Sin resultados para "{search}".</p>}
-            {filteredRoster.map((r) => (
-              <button key={r.id} onClick={() => setSelectedId(selectedId === r.id ? null : r.id)}
-                className="w-full text-left rounded-lg p-3 flex items-center justify-between transition-colors"
-                style={{
-                  background: r.waitingApproval ? COLORS.track + "1A" : (selectedId === r.id ? COLORS.surface2 : COLORS.surface),
-                  border: `${r.waitingApproval ? 2 : 1}px solid ${r.waitingApproval ? COLORS.track : (selectedId === r.id ? COLORS.track : COLORS.border)}`,
-                  boxShadow: r.waitingApproval ? `0 0 0 3px ${COLORS.track}22` : "none",
-                }}>
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold truncate flex items-center gap-2" style={{ color: COLORS.textPrimary }}>
-                    {r.name}
-                    {rosterProgress[r.id]?.reloj && (
-                      <span className="inline-flex shrink-0"
-                        title={rosterProgress[r.id].reloj.problema
-                          ? "Reloj conectado, pero la última conexión falló: revisa su ficha"
-                          : "Reloj conectado"}
-                        aria-label={rosterProgress[r.id].reloj.problema ? "Reloj con problemas" : "Reloj conectado"}>
-                        <Watch size={14} style={{ color: rosterProgress[r.id].reloj.problema ? COLORS.hard : COLORS.easy }} />
-                      </span>
-                    )}
-                  </div>
-                  {r.waitingApproval && (
-                    <div className="flex items-center gap-1.5 mt-1 px-2 py-0.5 rounded-full w-fit" style={{ background: COLORS.track }}>
-                      <Check size={11} style={{ color: COLORS.lane }} />
-                      <span className="text-[10px] font-bold uppercase tracking-wide" style={{ color: COLORS.lane }}>
-                        Semana enviada · cerrar y generar la siguiente
-                      </span>
-                    </div>
-                  )}
-                  <div className="text-xs mt-0.5" style={{ color: COLORS.textMuted }}>
-                    {GOAL_LABEL[r.goal]} · {LEVEL_LABEL[r.level]} · Semana {r.weekNumber}
-                    {r.raceDate ? ` · faltan ${weeksBetween(r.raceDate)} sem.` : ""}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 shrink-0 ml-2">
-                  {rosterProgress[r.id]?.autoPublished && (
-                    <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded" title="La semana se publicó automáticamente y todavía no la revisaste"
-                      style={{ background: COLORS.moderate + "22", color: COLORS.moderate, border: `1px solid ${COLORS.moderate}66` }}>
-                      Auto
-                    </span>
-                  )}
-                  {rosterProgress[r.id] && rosterProgress[r.id].total > 0 && (
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded" style={{ background: COLORS.bg, color: COLORS.textMuted, border: `1px solid ${COLORS.border}` }}>
-                      {rosterProgress[r.id].completed} de {rosterProgress[r.id].total}
-                    </span>
-                  )}
-                  <AdherenceBadge compliance={rosterProgress[r.id]?.compliance} />
-                  {selectedId === r.id ? <ChevronDown size={14} style={{ color: COLORS.track }} /> : <ChevronRight size={14} style={{ color: COLORS.textMuted }} />}
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div>
-          {!student && !selectedId && (
-            <div className="rounded-xl p-10 text-center" style={{ background: COLORS.surface, border: `1px dashed ${COLORS.border}` }}>
-              <Activity size={28} style={{ color: COLORS.textMuted, margin: "0 auto" }} />
-              <p className="mt-3 text-sm" style={{ color: COLORS.textMuted }}>Busca y selecciona un alumno para ver y ajustar su plan semanal.</p>
-            </div>
-          )}
+  // Ficha del alumno elegido. Se muestra justo debajo de su nombre en el listado.
+  const fichaDelAlumno = (
+    <>
           {!student && selectedId && studentLoading && (
             <div className="rounded-xl p-10 text-center" style={{ background: COLORS.surface, border: `1px dashed ${COLORS.border}` }}>
               <p className="text-sm" style={{ color: COLORS.textMuted }}>Cargando…</p>
@@ -4368,9 +4012,335 @@ const resetPlan = async () => {
               </div>
             </div>
           )}
+    </>
+  );
+
+  return (
+    <div className="max-w-6xl mx-auto px-4 py-6">
+      <div className="flex items-center gap-3 mb-6">
+        <button onClick={onBack} className="p-2 rounded-lg" style={{ color: COLORS.textMuted }}><ArrowLeft size={18} /></button>
+        <Users size={20} style={{ color: COLORS.track }} />
+        <h1 className="text-xl font-semibold tracking-wide flex-1" style={{ fontFamily: "'Oswald', sans-serif", color: COLORS.textPrimary }}>PANEL DEL COACH</h1>
+        <button onClick={exportBackup} disabled={busy}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold"
+          style={{ background: COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
+          <Download size={14} /> Respaldo
+        </button>
+        <button onClick={() => setShowQR((v) => !v)}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold"
+          style={{ background: showQR ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
+          <QrCode size={14} /> Código QR
+        </button>
+        <button onClick={async () => { const next = !showDailyActivity; setShowDailyActivity(next); if (next && !dailyActivity) await loadDailyActivity(); }}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold"
+          style={{ background: showDailyActivity ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
+          <Activity size={14} /> Actividad diaria
+        </button>
+        <button onClick={() => setShowPaceAlerts((v) => !v)}
+          className="relative flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold"
+          style={{ background: showPaceAlerts ? COLORS.moderate : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
+          <AlertCircle size={14} /> Ajustes de ritmo
+          {pendingAlertsCount > 0 && (
+            <span className="absolute -top-1.5 -right-1.5 rounded-full text-[10px] font-bold flex items-center justify-center"
+              style={{ width: 18, height: 18, background: COLORS.track, color: COLORS.lane }}>
+              {pendingAlertsCount}
+            </span>
+          )}
+        </button>
+        <button onClick={() => setShowMuro((v) => !v)}
+          className="relative flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold"
+          style={{ background: showMuro ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
+          <Megaphone size={14} /> Anuncios
+          {pendientesMuro > 0 && (
+            <span className="absolute -top-1.5 -right-1.5 rounded-full text-[10px] font-bold flex items-center justify-center"
+              style={{ width: 18, height: 18, background: COLORS.track, color: COLORS.lane }}>
+              {pendientesMuro}
+            </span>
+          )}
+        </button>
+      </div>
+
+      {showMuro && (
+        <div className="mb-6">
+          <div className="text-sm font-semibold mb-3" style={{ color: COLORS.textPrimary, fontFamily: "'Oswald', sans-serif" }}>ANUNCIOS</div>
+          <MuroAnuncios esCoach onLeido={() => setPendientesMuro(0)} />
+        </div>
+      )}
+
+      {showQR && (
+        <div className="rounded-xl p-4 mb-6" style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}` }}>
+          <div className="text-sm font-semibold mb-2" style={{ color: COLORS.textPrimary, fontFamily: "'Oswald', sans-serif" }}>CÓDIGO QR</div>
+          <p className="text-xs mb-3" style={{ color: COLORS.textMuted }}>
+            Pega aquí el enlace publicado de esta app (el que compartes con tus alumnos) para generar un código QR que puedan escanear en vez de escribir la URL.
+          </p>
+          <input type="text" placeholder="https://claude.ai/..." value={qrUrl} onChange={(e) => setQrUrl(e.target.value)}
+            className="w-full rounded-lg px-3 py-2 text-sm mb-3" style={{ background: COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }} />
+          {qrUrl.trim() && (
+            <div className="flex flex-col items-start gap-2">
+              <QRCodeSVG text={qrUrl.trim()} size={220} />
+              <p className="text-[10px]" style={{ color: COLORS.textMuted }}>
+                Generado directamente en la app, sin depender de internet ni de ningún servicio externo.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {showDailyActivity && (() => {
+        let filteredActivity = dailyActivity || [];
+        if (activityStudentFilter) filteredActivity = filteredActivity.filter((r) => r.studentName === activityStudentFilter);
+        if (activityDateFrom) { const from = new Date(activityDateFrom + "T00:00:00"); filteredActivity = filteredActivity.filter((r) => r.date >= from); }
+        if (activityDateTo) { const to = new Date(activityDateTo + "T23:59:59"); filteredActivity = filteredActivity.filter((r) => r.date <= to); }
+        const groups = [];
+        filteredActivity.forEach((row) => {
+          const key = row.date.toDateString();
+          let g = groups.find((x) => x.key === key);
+          if (!g) { g = { key, date: row.date, rows: [] }; groups.push(g); }
+          g.rows.push(row);
+        });
+        const studentNames = [...new Set(roster.map((r) => r.name))].sort();
+        return (
+          <div className="rounded-xl p-4 mb-6" style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}` }}>
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-sm font-semibold" style={{ color: COLORS.textPrimary, fontFamily: "'Oswald', sans-serif" }}>ACTIVIDAD DIARIA — TODOS LOS ALUMNOS</div>
+              <button onClick={loadDailyActivity} disabled={loadingActivity} className="text-xs underline" style={{ color: COLORS.textMuted }}>
+                {loadingActivity ? "Actualizando…" : "Actualizar"}
+              </button>
+            </div>
+            <p className="text-xs mb-3" style={{ color: COLORS.textMuted }}>
+              Sesiones que tus alumnos ya marcaron como completadas, de más reciente a más antigua — sin esperar a que termine la semana.
+            </p>
+            <div className="flex flex-wrap gap-2 mb-3">
+              <select value={activityStudentFilter} onChange={(e) => setActivityStudentFilter(e.target.value)}
+                className="rounded-lg px-2 py-1.5 text-xs" style={{ background: COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
+                <option value="">Todos los alumnos</option>
+                {studentNames.map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+              <div className="flex items-center gap-1">
+                <label className="text-xs" style={{ color: COLORS.textMuted }}>Desde</label>
+                <input type="date" value={activityDateFrom} onChange={(e) => setActivityDateFrom(e.target.value)}
+                  className="rounded-lg px-2 py-1.5 text-xs" style={{ background: COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }} />
+              </div>
+              <div className="flex items-center gap-1">
+                <label className="text-xs" style={{ color: COLORS.textMuted }}>Hasta</label>
+                <input type="date" value={activityDateTo} onChange={(e) => setActivityDateTo(e.target.value)}
+                  className="rounded-lg px-2 py-1.5 text-xs" style={{ background: COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }} />
+              </div>
+              {(activityStudentFilter || activityDateFrom || activityDateTo) && (
+                <button onClick={() => { setActivityStudentFilter(""); setActivityDateFrom(""); setActivityDateTo(""); }}
+                  className="text-xs underline" style={{ color: COLORS.textMuted }}>
+                  Quitar filtros
+                </button>
+              )}
+            </div>
+            {loadingActivity && <p className="text-sm" style={{ color: COLORS.textMuted }}>Cargando…</p>}
+            {!loadingActivity && groups.length === 0 && <p className="text-sm" style={{ color: COLORS.textMuted }}>No hay sesiones para mostrar con estos filtros.</p>}
+            <div className="space-y-4 max-h-[32rem] overflow-y-auto">
+              {groups.map((g) => (
+                <div key={g.key}>
+                  <div className="text-xs font-semibold uppercase tracking-wide mb-1.5" style={{ color: COLORS.track }}>
+                    {DAYS[(g.date.getDay() + 6) % 7]} {String(g.date.getDate()).padStart(2, "0")}/{String(g.date.getMonth() + 1).padStart(2, "0")}
+                  </div>
+                  <div className="space-y-1.5">
+                    {g.rows.map((r, i) => (
+                      <div key={i} className="rounded-lg p-2.5 text-sm" style={{ background: COLORS.surface2 }}>
+                        <div className="flex items-center justify-between flex-wrap gap-1">
+                          <span className="font-semibold" style={{ color: COLORS.textPrimary }}>{r.studentName}</span>
+                          <span style={{ color: COLORS.textMuted }}>{r.type}</span>
+                        </div>
+                        <div className="flex items-center gap-3 text-xs mt-1 flex-wrap" style={{ color: COLORS.textMuted }}>
+                          <span>{r.actualKm} km{r.actualKm !== r.plannedKm ? ` (plan: ${r.plannedKm} km)` : ""}</span>
+                          {r.rpe != null && <span>RPE {r.rpe}</span>}
+                        </div>
+                        {r.note && <p className="text-xs mt-1 italic" style={{ color: COLORS.textMuted }}>"{r.note}"</p>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
+      {showPaceAlerts && (
+        <div className="rounded-xl p-4 mb-6" style={{ background: COLORS.surface, border: `1px solid ${COLORS.moderate}` }}>
+          <div className="text-sm font-semibold mb-3" style={{ color: COLORS.textPrimary, fontFamily: "'Oswald', sans-serif" }}>AJUSTES DE RITMO SUGERIDOS</div>
+          <p className="text-xs mb-4" style={{ color: COLORS.textMuted }}>
+            Se generan cuando un alumno falla el ritmo objetivo (10-15+ seg/km más lento) en martes y/o jueves. Revisa la nota del alumno antes de decidir.
+          </p>
+          <div className="space-y-2">
+            {paceAlerts.filter((a) => a.status === "pending").length === 0 && (
+              <p className="text-sm" style={{ color: COLORS.textMuted }}>No hay ajustes pendientes.</p>
+            )}
+            {paceAlerts.filter((a) => a.status === "pending").slice().reverse().map((a) => (
+              <div key={a.id} className="rounded-lg p-3" style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}` }}>
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="text-sm font-semibold" style={{ color: COLORS.textPrimary }}>{a.studentName} · Semana {a.weekNumber}</div>
+                  <Pill color={COLORS.moderate}>
+                    {a.trigger === "general" ? "Ajuste general (martes y jueves)" : a.trigger === "q1" ? "Solo martes" : "Solo jueves"}
+                  </Pill>
+                </div>
+                <div className="text-xs mt-2 space-y-1" style={{ color: COLORS.textMuted }}>
+                  {a.q1TargetPace != null && (
+                    <div>Martes: objetivo {formatPace(a.q1TargetPace)}/km, real {a.q1ActualPace || "—"}/km{a.q1Note ? ` · Nota: "${a.q1Note}"` : ""}</div>
+                  )}
+                  {a.q2TargetPace != null && (
+                    <div>Jueves: objetivo {formatPace(a.q2TargetPace)}/km, real {a.q2ActualPace || "—"}/km{a.q2Note ? ` · Nota: "${a.q2Note}"` : ""}</div>
+                  )}
+                </div>
+                <div className="flex gap-2 mt-3">
+                  <button onClick={() => resolvePaceAlert(a, true)} disabled={busy}
+                    className="px-3 py-1.5 rounded text-xs font-semibold" style={{ background: COLORS.track, color: COLORS.lane }}>
+                    Aplicar ajuste
+                  </button>
+                  <button onClick={() => resolvePaceAlert(a, false)} disabled={busy}
+                    className="px-3 py-1.5 rounded text-xs" style={{ color: COLORS.textMuted }}>
+                    Descartar (fue algo puntual)
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="space-y-6">
+        <div>
+          <button onClick={() => setShowAdd((v) => !v)}
+            className="w-full mb-3 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold"
+            style={{ background: COLORS.track, color: COLORS.lane }}>
+            <Plus size={16} /> Añadir alumno
+          </button>
+          {showAdd && <AddStudentForm onCancel={() => setShowAdd(false)} onCreate={createStudent} />}
+          {pendingCreate && (
+            <div className="rounded-xl p-4 mb-4" style={{ background: COLORS.moderate + "18", border: `1px solid ${COLORS.moderate}` }}>
+              <div className="flex items-center gap-2 mb-2">
+                <AlertCircle size={16} style={{ color: COLORS.moderate }} />
+                <span className="text-sm font-semibold" style={{ color: COLORS.textPrimary }}>El plan inicial tiene algo que revisar</span>
+              </div>
+              <ul className="text-xs mb-3 space-y-1 list-disc pl-4" style={{ color: COLORS.textMuted }}>
+                {pendingCreate.warnings.map((w, i) => <li key={i}>{w}</li>)}
+              </ul>
+              <div className="flex gap-2">
+                <button onClick={() => createStudent({ ...pendingCreate.args, forceCreate: true })} disabled={busy}
+                  className="px-3 py-1.5 rounded text-xs font-semibold" style={{ background: COLORS.moderate, color: COLORS.bg }}>
+                  Crear de todas formas
+                </button>
+                <button onClick={() => setPendingCreate(null)} className="px-3 py-1.5 rounded text-xs" style={{ color: COLORS.textMuted }}>
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          )}
+
+          {roster.length > 0 && (
+            <div className="flex flex-wrap gap-2 mb-3">
+              <button onClick={loadRosterProgress} title="Actualizar progreso semanal de todos los alumnos"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold"
+                style={{ background: COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
+                <RefreshCcw size={12} /> Actualizar progreso
+              </button>
+              <button onClick={() => setStatusFilter(statusFilter === "waiting" ? null : "waiting")}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold"
+                style={{
+                  background: (statusFilter === "waiting" || waitingCount > 0) ? COLORS.track : COLORS.surface2,
+                  color: COLORS.lane,
+                  border: `1px solid ${COLORS.track}${waitingCount > 0 ? "" : "55"}`,
+                  boxShadow: waitingCount > 0 ? `0 0 0 3px ${COLORS.track}22` : "none",
+                }}>
+                <Clock size={12} /> {waitingCount} esperando aprobación
+              </button>
+              <button onClick={() => setStatusFilter(statusFilter === "low" ? null : "low")}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold"
+                style={{ background: statusFilter === "low" ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.track}55` }}>
+                <TrendingDown size={12} /> {lowAdherenceCount} con adherencia baja
+              </button>
+              <button onClick={() => setStatusFilter(statusFilter === "paused" ? null : "paused")}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold"
+                style={{ background: statusFilter === "paused" ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.track}55` }}>
+                ⏸ {pausedCount} pausados
+              </button>
+              <select value={goalFilter} onChange={(e) => setGoalFilter(e.target.value)}
+                className="px-3 py-1.5 rounded-full text-xs font-semibold" style={{ background: goalFilter ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.track}55` }}>
+                <option value="">Todos los objetivos</option>
+                {GOALS.map((g) => <option key={g.id} value={g.id}>{g.label}</option>)}
+              </select>
+              {(statusFilter || goalFilter) && (
+                <button onClick={() => { setStatusFilter(null); setGoalFilter(""); }} className="text-xs underline" style={{ color: COLORS.textMuted }}>
+                  Quitar filtro
+                </button>
+              )}
+            </div>
+          )}
+
+          <div className="relative mb-3">
+            <Search size={16} style={{ position: "absolute", left: 12, top: 12, color: COLORS.textMuted }} />
+            <input type="text" placeholder="Busca un alumno por nombre" value={search} onChange={(e) => setSearch(e.target.value)}
+              className="w-full pl-9 pr-3 py-2.5 rounded-lg text-sm" style={{ background: COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }} />
+          </div>
+
+          <div className="space-y-2">
+            {roster.length === 0 && <p className="text-sm px-1" style={{ color: COLORS.textMuted }}>Aún no tienes alumnos registrados.</p>}
+            {roster.length > 0 && filteredRoster.length === 0 && <p className="text-sm px-1" style={{ color: COLORS.textMuted }}>Sin resultados para "{search}".</p>}
+            {filteredRoster.map((r) => (
+              <React.Fragment key={r.id}>
+              <button id={`alumno-${r.id}`} onClick={() => setSelectedId(selectedId === r.id ? null : r.id)}
+                className="w-full text-left rounded-lg p-3 flex items-center justify-between transition-colors"
+                style={{
+                  background: r.waitingApproval ? COLORS.track + "1A" : (selectedId === r.id ? COLORS.surface2 : COLORS.surface),
+                  border: `${r.waitingApproval ? 2 : 1}px solid ${r.waitingApproval ? COLORS.track : (selectedId === r.id ? COLORS.track : COLORS.border)}`,
+                  boxShadow: r.waitingApproval ? `0 0 0 3px ${COLORS.track}22` : "none",
+                }}>
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold truncate flex items-center gap-2" style={{ color: COLORS.textPrimary }}>
+                    {r.name}
+                    {rosterProgress[r.id]?.reloj && (
+                      <span className="inline-flex shrink-0"
+                        title={rosterProgress[r.id].reloj.problema
+                          ? "Reloj conectado, pero la última conexión falló: revisa su ficha"
+                          : "Reloj conectado"}
+                        aria-label={rosterProgress[r.id].reloj.problema ? "Reloj con problemas" : "Reloj conectado"}>
+                        <Watch size={14} style={{ color: rosterProgress[r.id].reloj.problema ? COLORS.hard : COLORS.easy }} />
+                      </span>
+                    )}
+                  </div>
+                  {r.waitingApproval && (
+                    <div className="flex items-center gap-1.5 mt-1 px-2 py-0.5 rounded-full w-fit" style={{ background: COLORS.track }}>
+                      <Check size={11} style={{ color: COLORS.lane }} />
+                      <span className="text-[10px] font-bold uppercase tracking-wide" style={{ color: COLORS.lane }}>
+                        Semana enviada · cerrar y generar la siguiente
+                      </span>
+                    </div>
+                  )}
+                  <div className="text-xs mt-0.5" style={{ color: COLORS.textMuted }}>
+                    {GOAL_LABEL[r.goal]} · {LEVEL_LABEL[r.level]} · Semana {r.weekNumber}
+                    {r.raceDate ? ` · faltan ${weeksBetween(r.raceDate)} sem.` : ""}
+                  </div>
+                  <EstadoDeLaSemana estado={rosterProgress[r.id]?.estado} />
+                </div>
+                <div className="flex items-center gap-2 shrink-0 ml-2">
+                  {rosterProgress[r.id]?.autoPublished && (
+                    <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded" title="La semana se publicó automáticamente y todavía no la revisaste"
+                      style={{ background: COLORS.moderate + "22", color: COLORS.moderate, border: `1px solid ${COLORS.moderate}66` }}>
+                      Auto
+                    </span>
+                  )}
+                  {selectedId === r.id ? <ChevronDown size={14} style={{ color: COLORS.track }} /> : <ChevronRight size={14} style={{ color: COLORS.textMuted }} />}
+                </div>
+              </button>
+              {selectedId === r.id && (
+                <div className="pt-2 pb-6">{fichaDelAlumno}</div>
+              )}
+              </React.Fragment>
+            ))}
+          </div>
+          {/* Si el alumno abierto quedó fuera por la búsqueda o un filtro, su ficha sigue a la vista. */}
+          {selectedId && !filteredRoster.some((r) => r.id === selectedId) && (
+            <div className="mt-4">{fichaDelAlumno}</div>
+          )}
         </div>
       </div>
-      )}
     </div>
   );
 }
