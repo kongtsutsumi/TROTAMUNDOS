@@ -45,3 +45,16 @@ button:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   .animate-fadein { animation: none; }
 }
+
+/* El iPhone acerca la pantalla cuando se toca un campo con letra menor a 16 px (el
+   buscador de nombre, el PIN, la contraseña del coach…) y después no la devuelve: la app
+   queda agrandada y no se ve completa. Con 16 px en los campos no hace ese zoom, y la
+   persona puede seguir agrandando con dos dedos si lo necesita. Solo en pantallas de
+   celular y tablet; en la computadora los campos conservan su tamaño. */
+@media (max-width: 1024px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
