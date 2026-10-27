@@ -5010,6 +5010,9 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
   // Ya no depende de la fecha: espera al coach solo cuando la última semana disponible ya
   // fue confirmada (enviada) y todavía no hay una siguiente preparada.
   const waitingForCoach = !!(currentWeekData?.submitted && activeLogWeek >= furthestApprovedWeek);
+  // Desde Inicio se registra la sesión de hoy con las mismas reglas que en Plan: semana en
+  // curso, no enviada todavía y sin estar esperando al coach.
+  const puedeRegistrarHoy = !!(currentWeekData && activeLogWeek === todayWeekNum && !currentWeekData.studentSubmitted && !waitingForCoach);
 
   // En los planes de fitness el alumno puede mover una sesión a un día contiguo, para
   // acomodarla a su semana sin depender del coach.
@@ -5071,26 +5074,28 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
                   <span key={x.i} className="flex-1 h-2 rounded-full" style={{ background: currentWeekData.log[x.i]?.completed ? COLORS.easy : COLORS.border }} />
                 ))}
               </div>
-              {currentWeekData.plan?.[todayDowIndex]?.paceKey ? (
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="text-[11px] font-bold uppercase tracking-[0.12em]" style={{ color: COLORS.textMuted }}>Hoy</div>
-                    <div className="text-base font-semibold" style={{ fontFamily: "'Oswald', sans-serif", color: COLORS.textPrimary }}>
-                      {currentWeekData.plan[todayDowIndex].type}{currentWeekData.plan[todayDowIndex].km ? ` · ${currentWeekData.plan[todayDowIndex].km} km` : ""}
-                    </div>
-                  </div>
-                  {currentWeekData.log?.[todayDowIndex]?.completed ? (
-                    <span className="text-xs font-bold px-2 py-1 rounded-full" style={{ background: COLORS.easy + "22", color: COLORS.easy }}>Hecha</span>
-                  ) : (
-                    <span className="text-xs font-bold px-2 py-1 rounded-full" style={{ background: COLORS.track + "22", color: COLORS.track }}>Pendiente</span>
-                  )}
-                </div>
-              ) : (
-                <div className="text-sm" style={{ color: COLORS.textMuted }}>Hoy toca descanso.</div>
-              )}
-              <button onClick={() => irA("semana")} className="mt-3 text-sm font-semibold inline-flex items-center gap-0.5" style={{ color: COLORS.track }}>
+              <button onClick={() => irA("semana")} className="text-sm font-semibold inline-flex items-center gap-0.5" style={{ color: COLORS.track }}>
                 Ver mi plan <ChevronRight size={15} />
               </button>
+            </div>
+          )}
+          {/* El entrenamiento del día, completo: la misma tarjeta que en Plan, con sus ritmos,
+              el detalle de la sesión, "Iniciar entrenamiento" y el registro. */}
+          {currentWeekData && activeLogWeek === todayWeekNum && (
+            <div data-testid="entrenamiento-de-hoy">
+              <div className="text-[11px] font-bold uppercase tracking-[0.12em] mb-2 px-1" style={{ color: COLORS.textMuted }}>Tu entrenamiento de hoy</div>
+              {currentWeekData.plan?.[todayDowIndex]?.paceKey ? (
+                <LapCard day={currentWeekData.plan[todayDowIndex]} index={todayDowIndex}
+                  mode={puedeRegistrarHoy ? "log" : "view"} log={currentWeekData.log[todayDowIndex]}
+                  extras={extrasDelDia(currentWeekData, todayDowIndex, student, activeLogWeek)}
+                  onChangeLog={puedeRegistrarHoy ? changeLog : undefined} isToday={puedeRegistrarHoy}
+                  isRaceGoal={!isFitnessGoal(student.goal)}
+                  onStartLive={puedeRegistrarHoy ? (idx) => setLiveTrainingDayIdx(idx) : undefined} />
+              ) : (
+                <div className="rounded-2xl p-4 text-sm" style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, color: COLORS.textMuted }}>
+                  Hoy toca descanso. Recupera bien para la próxima sesión.
+                </div>
+              )}
             </div>
           )}
           <MembershipCard data={miPlan.data} onMore={() => irA("pagos")} />
@@ -5246,17 +5251,6 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
             {week.plan.map((d, i) => <LapCard key={i} day={d} index={i} mode={canEditWeek && !waitingForCoach ? "log" : "view"} log={week.log[i]} extras={extrasDelDia(week, i, student, activeWeekNum)} onChangeLog={canEditWeek ? changeLog : undefined} isToday={canEditWeek && i === todayDowIndex} isRaceGoal={!isFitnessGoal(student.goal)} onStartLive={canEditWeek && !waitingForCoach ? (idx) => setLiveTrainingDayIdx(idx) : undefined} onMoveSession={canMoveSessions ? moveHelper : undefined} />)}
           </div>
 
-          {liveTrainingDayIdx != null && week.plan[liveTrainingDayIdx] && (
-            <LiveTrainingScreen
-              day={week.plan[liveTrainingDayIdx]}
-              easyPace={student.paces?.E}
-              onClose={() => setLiveTrainingDayIdx(null)}
-              onComplete={({ actualKm, actualPaceStr }) => {
-                saveLiveTrainingResult(liveTrainingDayIdx, { ...week.log[liveTrainingDayIdx], completed: true, actualKm, actualPaceStr });
-                setLiveTrainingDayIdx(null);
-              }}
-            />
-          )}
 
           <button onClick={() => exportWeekToPDF(student, week, activeWeekNum)}
             className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold mb-4"
@@ -5357,6 +5351,20 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
             <LogOut size={16} /> No soy {student.name} — cambiar de alumno
           </button>
         </div>
+      )}
+
+      {/* Entrenamiento en vivo: se puede iniciar desde Plan o desde Inicio. Siempre es una
+          sesión de la semana en curso (la única que se puede registrar). */}
+      {student && liveTrainingDayIdx != null && currentWeekData?.plan?.[liveTrainingDayIdx] && (
+        <LiveTrainingScreen
+          day={currentWeekData.plan[liveTrainingDayIdx]}
+          easyPace={student.paces?.E}
+          onClose={() => setLiveTrainingDayIdx(null)}
+          onComplete={({ actualKm, actualPaceStr }) => {
+            saveLiveTrainingResult(liveTrainingDayIdx, { ...currentWeekData.log[liveTrainingDayIdx], completed: true, actualKm, actualPaceStr });
+            setLiveTrainingDayIdx(null);
+          }}
+        />
       )}
 
       {/* Barra fija inferior. Se oculta durante el entrenamiento en vivo, que ocupa la
