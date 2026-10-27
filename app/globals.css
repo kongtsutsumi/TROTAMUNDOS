@@ -58,3 +58,29 @@ button:focus-visible {
     font-size: 16px !important;
   }
 }
+
+/* Margen superior en TODA la app. Abierta desde la pantalla de inicio del celular, la app
+   ocupa la pantalla completa y, sin esto, los botones de arriba quedan debajo de la hora y
+   la batería y no se pueden tocar.
+     · El cuerpo de la página empieza debajo de esa franja.
+     · Una franja fija del color de fondo la tapa: al hacer scroll, nada pasa por debajo
+       de la hora.
+   En el navegador normal env(safe-area-inset-top) vale 0 y no cambia nada. */
+body {
+  padding-top: env(safe-area-inset-top);
+}
+body::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: env(safe-area-inset-top);
+  background: #12151b;
+  z-index: 1000;
+  pointer-events: none;
+}
+/* Pantallas que ocupan todo (entrenamiento en vivo): también empiezan debajo de la hora. */
+.margen-seguro-arriba {
+  padding-top: env(safe-area-inset-top);
+}

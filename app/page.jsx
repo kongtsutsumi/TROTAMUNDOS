@@ -970,7 +970,7 @@ function LiveTrainingScreen({ day, easyPace, onClose, onComplete }) {
 
   if (status === "done") {
     return (
-      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center px-6" style={{ background: COLORS.bg }}>
+      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center px-6 margen-seguro-arriba" style={{ background: COLORS.bg }}>
         <Check size={48} style={{ color: COLORS.easy }} />
         <h2 className="text-2xl font-bold mt-4 mb-1" style={{ fontFamily: "'Oswald', sans-serif", color: COLORS.textPrimary }}>¡Listo!</h2>
         <p className="text-sm mb-6" style={{ color: COLORS.textMuted }}>Resumen de tu sesión</p>
@@ -1008,7 +1008,7 @@ function LiveTrainingScreen({ day, easyPace, onClose, onComplete }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col" style={{ background: COLORS.bg }}>
+    <div className="fixed inset-0 z-50 flex flex-col margen-seguro-arriba" style={{ background: COLORS.bg }}>
       {screenFlash && (
         <div className="fixed inset-0 z-[60] pointer-events-none" style={{ background: COLORS.track, animation: "screenFlashPulse 0.5s ease-out" }} />
       )}
@@ -5031,10 +5031,10 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
 
   return (
     <div className="max-w-4xl mx-auto px-4" style={{ paddingBottom: "calc(6rem + env(safe-area-inset-bottom))" }}>
-      {/* Cabecera fija con el logo. Respeta la zona de la hora y la batería del teléfono
-          cuando la app se abre desde la pantalla de inicio. */}
-      <header className="sticky top-0 z-30 -mx-4 px-4 mb-4 flex items-center justify-between gap-3"
-        style={{ background: COLORS.bg, paddingTop: "calc(0.75rem + env(safe-area-inset-top))", paddingBottom: "0.75rem", borderBottom: `1px solid ${COLORS.border}` }}>
+      {/* Cabecera fija con el logo. Se queda pegada justo debajo de la hora y la batería
+          (el margen general de la app está en globals.css). */}
+      <header className="sticky z-30 -mx-4 px-4 mb-4 flex items-center justify-between gap-3"
+        style={{ top: "env(safe-area-inset-top)", background: COLORS.bg, paddingTop: "0.75rem", paddingBottom: "0.75rem", borderBottom: `1px solid ${COLORS.border}` }}>
         <img src="/logo.png" alt="Trotamundos" style={{ height: 26, width: "auto" }} />
         {student && (
           <span className="text-sm truncate" style={{ color: COLORS.textMuted, maxWidth: "50%" }}>{student.name}</span>
@@ -5424,10 +5424,10 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
    ROLE SELECT
 --------------------------------------------------------- */
 function RoleSelect({ onSelect }) {
-  // Arriba deja libre la zona de la hora y la batería (app abierta desde la pantalla de
-  // inicio) y además un margen limpio para que el logo respire.
+  // Margen limpio arriba para que el logo respire (la franja de la hora ya la deja libre
+  // el margen general de la app, en globals.css).
   return (
-    <div className="max-w-2xl mx-auto px-4 pb-16" style={{ paddingTop: "calc(env(safe-area-inset-top) + 5.5rem)" }}>
+    <div className="max-w-2xl mx-auto px-4 pb-16" style={{ paddingTop: "5.5rem" }}>
       <div className="text-center mb-12">
         <img src="/logo.png" alt="Trotamundos" className="mx-auto" style={{ width: "min(320px, 80vw)", height: "auto" }} />
         <div className="text-sm font-semibold tracking-[0.3em] uppercase mt-5" style={{ color: COLORS.track }}>el app · V.05</div>
