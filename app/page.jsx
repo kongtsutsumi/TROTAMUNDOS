@@ -41,8 +41,20 @@ import {
   buildBeginnerPlan,
   buildInitialRacePlan,
   buildLiveSegments,
+  cerrarSemanaV2,
+  getPeakWarnings,
+  goalAllowsLevel,
+  levelsForGoal,
+  MOTOR_ACTUAL,
+  peakLongKmFor,
+  planWeekOf,
+  QUALITY_CAP_PCT_DEFAULT,
+  qualityCapPctOf,
+  suggestQualityPacesV2,
+  usaMotor2,
   buildRacePlan,
   buildWeekProposal,
+  calidadSuave,
   capLongRunKm,
   computeAdherence,
   computeHistoricalAdherence,
@@ -191,7 +203,7 @@ function buildWeeklyReportData(student, weekRaw, weekNum) {
   }, 0));
   const rpeValues = completedSlots.map((x) => week.log[x.i]?.rpe).filter((v) => v !== "" && v != null).map(Number);
   const avgRpe = rpeValues.length ? r1(rpeValues.reduce((a, b) => a + b, 0) / rpeValues.length) : null;
-  const qualityTypes = ["R", "I", "T", "brokenT", "M", "race", "combo1k500"];
+  const qualityTypes = ["R", "I", "T", "brokenT", "M", "race", "combo1k500", "fartlek"];
   const paceComparisons = completedSlots
     .filter((x) => qualityTypes.includes(x.d?.paceKey))
     .map((x) => {
@@ -1581,7 +1593,12 @@ function LapCard({ day: dayRaw, index, mode, log, onChangeDay, onChangeLog, isTo
                 </select>
               )}
               {displayPaceKey(day.paceKey) === "custom" && (
-                <select value={day.paceKey} onChange={(e) => onChangeDay(index, { ...day, paceKey: e.target.value })}
+                <select value={day.paceKey} onChange={(e) => {
+                    const paceKey = e.target.value;
+                    if (paceKey !== "fartlek" && paceKey !== "hills") return onChangeDay(index, { ...day, paceKey });
+                    const next = { ...day, paceKey, distOverride: null, repsOverride: null, recoveryOverride: null, type: getDefaultTitle(paceKey, false, false) };
+                    onChangeDay(index, { ...next, km: computeImpliedKm(next) });
+                  }}
                   className="col-span-2 rounded px-2 py-1 text-xs" style={{ background: COLORS.bg, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
                   {OTRO_TEMPLATES.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
                 </select>
@@ -1653,6 +1670,39 @@ function LapCard({ day: dayRaw, index, mode, log, onChangeDay, onChangeLog, isTo
                   )}
                 </div>
               )}
+              {(day.paceKey === "fartlek" || day.paceKey === "hills") && (() => {
+                const fart = day.paceKey === "fartlek";
+                const c = calidadSuave(day);
+                const set = (patch) => { const next = { ...day, ...patch }; onChangeDay(index, { ...next, km: computeImpliedKm(next) }); };
+                const fieldStyle = { background: COLORS.bg, color: COLORS.lane, border: `1px solid ${COLORS.border}` };
+                return (
+                  <div className="col-span-2 flex flex-wrap gap-2 pt-1" style={{ borderTop: `1px dashed ${COLORS.border}` }}>
+                    <div style={{ minWidth: 80 }}>
+                      <label className="block text-[9px] uppercase tracking-wide mb-1" style={{ color: COLORS.textMuted }}>Repeticiones</label>
+                      <input type="number" min="1" max="30" step="1" value={c.reps} onChange={(e) => set({ repsOverride: Number(e.target.value) || null })}
+                        className="w-full rounded px-1.5 py-1 text-[11px] font-mono" style={fieldStyle} />
+                    </div>
+                    <div style={{ minWidth: 90 }}>
+                      <label className="block text-[9px] uppercase tracking-wide mb-1" style={{ color: COLORS.textMuted }}>{fart ? "Rápido (min)" : "Subida (seg)"}</label>
+                      <input type="number" min="1" step={fart ? 0.5 : 5} value={fart ? c.workMin : c.workSec} onChange={(e) => set({ distOverride: Number(e.target.value) || null })}
+                        className="w-full rounded px-1.5 py-1 text-[11px] font-mono" style={fieldStyle} />
+                    </div>
+                    <div style={{ minWidth: 90 }}>
+                      <label className="block text-[9px] uppercase tracking-wide mb-1" style={{ color: COLORS.textMuted }}>{fart ? "Trote (min)" : "Bajada (min)"}</label>
+                      <input type="number" min="0" step="0.5" value={c.recMin} onChange={(e) => set({ recoveryOverride: e.target.value === "" ? null : Number(e.target.value) })}
+                        className="w-full rounded px-1.5 py-1 text-[11px] font-mono" style={fieldStyle} />
+                    </div>
+                    {fart && (
+                      <div style={{ minWidth: 90 }}>
+                        <label className="block text-[9px] uppercase tracking-wide mb-1" style={{ color: COLORS.textMuted }}>Ritmo (m:ss)</label>
+                        <input type="text" placeholder="Auto" value={day.paceOverrideStr ?? ""}
+                          onChange={(e) => set({ paceOverrideStr: e.target.value, paceOverride: parsePaceToDecimal(e.target.value) })}
+                          className="w-full rounded px-1.5 py-1 text-[11px] font-mono" style={fieldStyle} />
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
               {day.paceKey === "brokenT" && (
                 <div className="col-span-2 flex flex-wrap gap-2 pt-1" style={{ borderTop: `1px dashed ${COLORS.border}` }}>
                   <div style={{ minWidth: 90 }}>
@@ -2072,6 +2122,53 @@ function LecturaDelTiempo({ texto, goal }) {
   );
 }
 
+// Datos opcionales con los que el motor arma la base, y el tope de las sesiones de calidad.
+// Se usan al crear un alumno y al cambiarle el objetivo.
+function CamposDelPlan({ goal, level, peak, kmHoy, setKmHoy, fondoHoy, setFondoHoy, topeCalidad, setTopeCalidad }) {
+  const avisos = peak > 0 ? getPeakWarnings(goal, level, peak) : [];
+  const inputStyle = { background: COLORS.bg, color: COLORS.lane, border: `1px solid ${COLORS.border}` };
+  return (
+    <>
+      {level !== "principiante" && (
+        <div className="sm:col-span-2">
+          <label className="block text-[10px] uppercase tracking-wide mb-1" style={{ color: COLORS.textMuted }}>¿Cuánto corre hoy? (opcional)</label>
+          <div className="grid grid-cols-2 gap-2">
+            <input type="number" min="0" step="1" inputMode="numeric" placeholder="Km por semana" value={kmHoy}
+              onChange={(e) => setKmHoy(e.target.value)} className="w-full rounded px-3 py-2 text-sm font-mono" style={inputStyle} />
+            <input type="number" min="0" step="1" inputMode="numeric" placeholder="Fondo más largo (último mes)" value={fondoHoy}
+              onChange={(e) => setFondoHoy(e.target.value)} className="w-full rounded px-3 py-2 text-sm font-mono" style={inputStyle} />
+          </div>
+          <p className="text-[10px] mt-1" style={{ color: COLORS.textMuted }}>
+            Con estos datos la base arranca donde el alumno está hoy. Si los dejas vacíos, arranca con el mínimo que necesitan sus días y sube de a poco.
+          </p>
+        </div>
+      )}
+      <div className="sm:col-span-2">
+        <label className="block text-[10px] uppercase tracking-wide mb-1" style={{ color: COLORS.textMuted }}>Tope por sesión de calidad</label>
+        <div className="flex items-center gap-2">
+          <input type="number" min="10" max="50" step="1" inputMode="numeric" value={topeCalidad}
+            onChange={(e) => setTopeCalidad(e.target.value)} className="w-20 rounded px-3 py-2 text-sm font-mono" style={inputStyle} />
+          <span className="text-xs" style={{ color: COLORS.textMuted }}>% del volumen de la semana (sugerido: 25%)</span>
+        </div>
+      </div>
+      {avisos.length > 0 && (
+        <div className="sm:col-span-2 rounded-lg px-3 py-2 text-xs" style={{ background: COLORS.bg, border: `1px solid ${COLORS.track}`, color: COLORS.textPrimary }}>
+          {avisos.map((a, i) => <p key={i} className={i ? "mt-1" : ""}>⚠ {a}</p>)}
+        </div>
+      )}
+    </>
+  );
+}
+// Lee los campos de CamposDelPlan. Devuelve un error de texto o los valores listos.
+function leerCamposDelPlan(kmHoy, fondoHoy, topeCalidad) {
+  const num = (v) => (String(v ?? "").trim() === "" ? null : Number(v));
+  const km = num(kmHoy), fondo = num(fondoHoy), tope = num(topeCalidad);
+  if (km != null && (isNaN(km) || km < 0 || km > 250)) return { error: "Los km por semana de hoy deben ser un número entre 0 y 250." };
+  if (fondo != null && (isNaN(fondo) || fondo < 0 || fondo > 45)) return { error: "El fondo más largo debe ser un número entre 0 y 45 km." };
+  if (tope != null && (isNaN(tope) || tope < 10 || tope > 50)) return { error: "El tope de calidad debe estar entre 10% y 50%." };
+  return { currentWeeklyKm: km || null, currentLongKm: fondo || null, qualityCapPct: tope != null ? tope / 100 : QUALITY_CAP_PCT_DEFAULT };
+}
+
 function ChangeGoalForm({ student, onCancel, onSave, busy }) {
   const [goal, setGoal] = useState(student.goal);
   const [level, setLevel] = useState(student.level);
@@ -2082,9 +2179,13 @@ function ChangeGoalForm({ student, onCancel, onSave, busy }) {
   const [targetTimeStr, setTargetTimeStr] = useState("");
   const [peakKmOverride, setPeakKmOverride] = useState("");
   const [applyTiming, setApplyTiming] = useState("current"); // "current" | "next"
+  const [kmHoy, setKmHoy] = useState(student.currentWeeklyKm ? String(student.currentWeeklyKm) : "");
+  const [fondoHoy, setFondoHoy] = useState(student.currentLongKm ? String(student.currentLongKm) : "");
+  const [topeCalidad, setTopeCalidad] = useState(String(Math.round(qualityCapPctOf(student) * 100)));
   const [error, setError] = useState("");
   const needsRaceInfo = !isFitnessGoal(goal);
-  const goalOptions = GOALS.filter((g) => !isFitnessGoal(g.id) || FITNESS_GOAL_LEVELS.includes(level));
+  // Principiante e Intermedio 1 (3 días): solo 10K y Fitness. 21K y 42K desde Intermedio 2.
+  const goalOptions = GOALS.filter((g) => goalAllowsLevel(g.id, level));
   // Si el nivel elegido ya no admite el objetivo actual (ej. pasar a un nivel sin planes de
   // fitness), se corrige solo para no quedar en una combinación imposible.
   useEffect(() => {
@@ -2105,8 +2206,10 @@ function ChangeGoalForm({ student, onCancel, onSave, busy }) {
     }
     const peakKmManual = peakKmOverride.trim() !== "" ? Number(peakKmOverride) : null;
     if (peakKmManual != null && (isNaN(peakKmManual) || peakKmManual <= 0)) return setError("El km pico debe ser un número positivo.");
+    const campos = leerCamposDelPlan(kmHoy, fondoHoy, topeCalidad);
+    if (campos.error) return setError(campos.error);
     setError("");
-    onSave({ goal, level, raceDate: needsRaceInfo ? raceDate : null, targetPaceStr: needsRaceInfo ? finalPaceStr : null, peakKmOverride: peakKmManual, applyTiming });
+    onSave({ goal, level, raceDate: needsRaceInfo ? raceDate : null, targetPaceStr: needsRaceInfo ? finalPaceStr : null, peakKmOverride: peakKmManual, applyTiming, ...campos });
   };
 
   return (
@@ -2176,6 +2279,9 @@ function ChangeGoalForm({ student, onCancel, onSave, busy }) {
               <input type="number" min="1" step="1" placeholder={`Actual: ${student.peakKm} km`} value={peakKmOverride} onChange={(e) => setPeakKmOverride(e.target.value)}
                 className="w-full rounded px-3 py-2 text-sm font-mono" style={{ background: COLORS.bg, color: COLORS.lane, border: `1px solid ${COLORS.border}` }} />
             </div>
+            <CamposDelPlan goal={goal} level={level} peak={Number(peakKmOverride) || student.peakKm}
+              kmHoy={kmHoy} setKmHoy={setKmHoy} fondoHoy={fondoHoy} setFondoHoy={setFondoHoy}
+              topeCalidad={topeCalidad} setTopeCalidad={setTopeCalidad} />
           </>
         )}
       </div>
@@ -2202,10 +2308,14 @@ function AddStudentForm({ onCancel, onCreate }) {
   const [fitnessStartWeek, setFitnessStartWeek] = useState(16);
   const [customTrainDays, setCustomTrainDays] = useState([0, 2, 5]); // Lun, Mié, Sáb por defecto
   const [planTiming, setPlanTiming] = useState("current"); // "current" | "next"
+  const [kmHoy, setKmHoy] = useState("");
+  const [fondoHoy, setFondoHoy] = useState("");
+  const [topeCalidad, setTopeCalidad] = useState(String(Math.round(QUALITY_CAP_PCT_DEFAULT * 100)));
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const needsRaceInfo = !isFitnessGoal(goal);
-  const levelOptions = isFitnessGoal(goal) ? LEVELS.filter((l) => FITNESS_GOAL_LEVELS.includes(l.id)) : LEVELS;
+  // Principiante e Intermedio 1 (3 días): solo 10K y Fitness. 21K y 42K desde Intermedio 2.
+  const levelOptions = levelsForGoal(goal);
   useEffect(() => {
     if (!levelOptions.some((l) => l.id === level)) setLevel(levelOptions[0].id);
   }, [goal]); // eslint-disable-line
@@ -2237,9 +2347,11 @@ function AddStudentForm({ onCancel, onCreate }) {
     const peakKmManual = peakKmOverride.trim() !== "" ? Number(peakKmOverride) : null;
     if (peakKmManual != null && (isNaN(peakKmManual) || peakKmManual <= 0)) return setError("El km pico debe ser un número positivo.");
     if (level === "principiante" && customTrainDays.length !== 3) return setError("Elige exactamente 3 días de entrenamiento.");
+    const campos = needsRaceInfo ? leerCamposDelPlan(kmHoy, fondoHoy, topeCalidad) : {};
+    if (campos.error) return setError(campos.error);
     setError("");
     setSubmitting(true);
-    onCreate({ name: name.trim(), goal, level, pin, raceDate: needsRaceInfo ? raceDate : null, targetPaceStr: needsRaceInfo ? finalPaceStr : null, peakKmOverride: peakKmManual, fitnessStartWeek: isFitnessGoal(goal) ? fitnessStartWeek : null, planTiming, trainDays: customTrainDays });
+    onCreate({ name: name.trim(), goal, level, pin, raceDate: needsRaceInfo ? raceDate : null, targetPaceStr: needsRaceInfo ? finalPaceStr : null, peakKmOverride: peakKmManual, fitnessStartWeek: isFitnessGoal(goal) ? fitnessStartWeek : null, planTiming, trainDays: customTrainDays, ...campos });
   };
 
   return (
@@ -2344,6 +2456,9 @@ function AddStudentForm({ onCancel, onCreate }) {
                 Déjalo vacío para usar el valor sugerido automáticamente. Ninguna semana del plan superará este número.
               </p>
             </div>
+            <CamposDelPlan goal={goal} level={level} peak={Number(peakKmOverride) || suggestedPeak}
+              kmHoy={kmHoy} setKmHoy={setKmHoy} fondoHoy={fondoHoy} setFondoHoy={setFondoHoy}
+              topeCalidad={topeCalidad} setTopeCalidad={setTopeCalidad} />
           </>
         )}
         <input type="text" inputMode="numeric" maxLength={4} placeholder="PIN de acceso (4 dígitos)" value={pin}
@@ -2536,9 +2651,9 @@ function PanoramaPanel({ data, student, currentWeek, edits, longEdits, qualityEd
                     const distVal = qEdit.dist !== undefined ? qEdit.dist : r[`${qk}Dist`];
                     const repsVal = qEdit.reps !== undefined ? qEdit.reps : r[`${qk}Reps`];
                     const typeOptions = qk === "q3" ? [{ v: "E", l: "Run/Walk" }, { v: "broken", l: "Pre-carga (series largas)" }]
-                      : [{ v: "R", l: "Series" }, { v: "I", l: "Intervalos" }, { v: "T", l: "Umbral continuo" }, { v: "brokenT", l: "Umbral fraccionado" }, { v: "combo1k500", l: "Intervalos 1k + 500" }];
-                    const distOptions = typeVal === "R" ? R_DISTANCES : typeVal === "I" ? I_DISTANCES : typeVal === "T" ? T_DURATIONS : null;
-                    const repsOptions = typeVal === "I" ? [2, 3, 4, 5, 6, 8, 10] : typeVal === "R" ? [6, 8, 10, 12, 14] : null;
+                      : [{ v: "R", l: "Series" }, { v: "I", l: "Intervalos" }, { v: "T", l: "Umbral continuo" }, { v: "brokenT", l: "Umbral fraccionado" }, { v: "combo1k500", l: "Intervalos 1k + 500" }, { v: "fartlek", l: "Fartlek" }, { v: "hills", l: "Cuestas" }];
+                    const distOptions = typeVal === "R" ? R_DISTANCES : typeVal === "I" ? I_DISTANCES : typeVal === "T" ? T_DURATIONS : typeVal === "fartlek" ? [1, 2, 3] : typeVal === "hills" ? [30, 45, 60, 90] : null;
+                    const repsOptions = typeVal === "I" ? [2, 3, 4, 5, 6, 8, 10] : typeVal === "R" ? [6, 8, 10, 12, 14] : typeVal === "fartlek" || typeVal === "hills" ? [4, 5, 6, 8, 10, 12] : null;
                     return (
                       <div key={qk} className="flex items-center gap-1.5 flex-wrap">
                         <span style={{ color: COLORS.textMuted, minWidth: 24 }}>{dayLabel}:</span>
@@ -2550,7 +2665,7 @@ function PanoramaPanel({ data, student, currentWeek, edits, longEdits, qualityEd
                           <select value={distVal ?? ""} onChange={(e) => onEditQuality(r.weekNum, qk, "dist", e.target.value ? Number(e.target.value) : null)}
                             className="rounded px-1.5 py-0.5 text-[11px]" style={{ background: COLORS.bg, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
                             <option value="">Auto</option>
-                            {distOptions.map((v) => <option key={v} value={v}>{typeVal === "T" ? `${v}'` : formatDist(v)}</option>)}
+                            {distOptions.map((v) => <option key={v} value={v}>{typeVal === "T" || typeVal === "fartlek" ? `${v}'` : typeVal === "hills" ? `${v}"` : formatDist(v)}</option>)}
                           </select>
                         )}
                         {repsOptions && (
@@ -2838,7 +2953,7 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
     setBusy(false);
   };
 
-  const changeGoal = async ({ goal, level, raceDate, targetPaceStr, peakKmOverride, applyTiming }) => {
+  const changeGoal = async ({ goal, level, raceDate, targetPaceStr, peakKmOverride, applyTiming, currentWeeklyKm, currentLongKm, qualityCapPct }) => {
     if (!student) return;
     setBusy(true);
     // El coach puede cambiar también el nivel (días por semana) junto con el objetivo;
@@ -2856,6 +2971,11 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
     const baseWeeks = markInactiveWeeks(student, student.currentWeek, targetWeekNum);
     const studentForChange = { ...student, weeks: baseWeeks };
     const existingTargetWeek = baseWeeks[targetWeekNum];
+    // Cambiar el objetivo pasa al alumno al motor nuevo (motor 2).
+    const motorFields = {
+      motor: MOTOR_ACTUAL, qualityCapPct: qualityCapPct ?? QUALITY_CAP_PCT_DEFAULT,
+      currentWeeklyKm: currentWeeklyKm ?? null, currentLongKm: currentLongKm ?? null, desdePrincipiante: false,
+    };
     let updated;
     if (isFitnessGoal(goal)) {
       const plan = buildBeginnerPlan(0, goal, newLevel, student.trainDays);
@@ -2877,7 +2997,7 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
         ? { weeklyKm: null, phase: "principiante", plan, log: emptyLog(), note: `Objetivo actualizado: ${GOAL_LABEL[goal]}.`, submitted: false }
         : { ...existingTargetWeek, plan, note: `Objetivo actualizado: ${GOAL_LABEL[goal]}.` };
       updated = {
-        ...studentForChange, goal, level: newLevel, raceDate, targetPaceStr, paces, peakKm, currentWeek: targetWeekNum, weeksToRace: weeksBetween(raceDate),
+        ...studentForChange, ...motorFields, goal, level: newLevel, raceDate, targetPaceStr, paces, peakKm, currentWeek: targetWeekNum, weeksToRace: weeksBetween(raceDate),
         volumeOverrides: {}, longRunOverrides: {}, qualityStreaks: { q1: 0, q2: 0 },
         weeks: { ...baseWeeks, [targetWeekNum]: weekEntry },
       };
@@ -2887,15 +3007,16 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
       paces.race = parsePaceToDecimal(targetPaceStr);
       anchorPacesToGoal(paces, goal);
       const peakKm = peakKmOverride || computePeakKm(goal, newLevel, vdot);
-      const peakLongKm = capLongRunKm(goal, newLevel, 999);
+      const peakLongKm = peakLongKmFor(goal, newLevel, peakKm);
       const weeksToRace = weeksBetween(raceDate);
-      const { phase, weeklyKm, plan } = buildInitialRacePlan(goal, newLevel, peakKm, peakLongKm, weeksToRace, paces);
+      const { phase, weeklyKm, plan } = buildInitialRacePlan(goal, newLevel, peakKm, peakLongKm, weeksToRace, paces,
+        { ...motorFields, planStartWeeksToRace: weeksToRace, planWeek: 1 });
       const note = `Objetivo actualizado: ${GOAL_LABEL[goal]}. Fase: ${PHASE_LABEL[phase]}.`;
       const weekEntry = applyNext
         ? { weeklyKm, phase, plan, log: emptyLog(), note, submitted: false }
         : { ...existingTargetWeek, weeklyKm, phase, plan, note };
       updated = {
-        ...studentForChange, goal, level: newLevel, raceDate, targetPaceStr, paces, peakKm, peakLongKm, weeksToRace, currentWeek: targetWeekNum,
+        ...studentForChange, ...motorFields, planStartWeeksToRace: weeksToRace, goal, level: newLevel, raceDate, targetPaceStr, paces, peakKm, peakLongKm, weeksToRace, currentWeek: targetWeekNum,
         volumeOverrides: {}, longRunOverrides: {}, qualityStreaks: { q1: 0, q2: 0 },
         weeks: { ...baseWeeks, [targetWeekNum]: weekEntry },
       };
@@ -3018,7 +3139,7 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
   const rosterSignature = roster.map((r) => `${r.id}:${r.weekNumber}:${r.waitingApproval ? 1 : 0}`).join("|");
   useEffect(() => { loadRosterProgress(); }, [rosterSignature]);
 
-  const createStudent = async ({ name, goal, level, pin, raceDate, targetPaceStr, peakKmOverride, fitnessStartWeek, planTiming, trainDays, forceCreate }) => {
+  const createStudent = async ({ name, goal, level, pin, raceDate, targetPaceStr, peakKmOverride, fitnessStartWeek, planTiming, trainDays, currentWeeklyKm, currentLongKm, qualityCapPct, forceCreate }) => {
     if (busy) return; // segunda capa: evita crear dos veces si algo dispara la acción por duplicado
     setBusy(true);
     const id = uid();
@@ -3028,6 +3149,11 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
     if (planTiming === "next") msMonday.setDate(msMonday.getDate() + 7);
     const planStartMonday = `${msMonday.getFullYear()}-${String(msMonday.getMonth() + 1).padStart(2, "0")}-${String(msMonday.getDate()).padStart(2, "0")}`;
     const finalTrainDays = level === "principiante" && trainDays && trainDays.length === 3 ? trainDays : undefined;
+    // Todo alumno nuevo nace con el motor 2.
+    const motorFields = {
+      motor: MOTOR_ACTUAL, qualityCapPct: qualityCapPct ?? QUALITY_CAP_PCT_DEFAULT,
+      currentWeeklyKm: currentWeeklyKm ?? null, currentLongKm: currentLongKm ?? null,
+    };
     let newStudent;
     if (isFitnessGoal(goal)) {
       const startWeek = fitnessStartWeek || FITNESS16_STAGES.length;
@@ -3047,7 +3173,7 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
       anchorPacesToGoal(paces, goal);
       const peakKm = peakKmOverride || computePeakKm(goal, level, vdot);
       newStudent = {
-        id, name, goal, level, pinHash, pinSalt, raceDate, targetPaceStr, paces, peakKm, volumeOverrides: {}, longRunOverrides: {}, qualityStreaks: { q1: 0, q2: 0 }, planStartMonday, trainDays: finalTrainDays,
+        id, name, goal, level, pinHash, pinSalt, raceDate, targetPaceStr, paces, peakKm, ...motorFields, volumeOverrides: {}, longRunOverrides: {}, qualityStreaks: { q1: 0, q2: 0 }, planStartMonday, trainDays: finalTrainDays,
         weeksToRace: weeksBetween(raceDate), currentWeek: 1, beginnerStage: 0,
         weeks: { 1: { weeklyKm: null, phase: "principiante", plan, log: emptyLog(), note: `Plan de acondicionamiento inicial: ${BEGINNER_STAGES[0].label}.`, submitted: false } },
       };
@@ -3057,19 +3183,23 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
       paces.race = parsePaceToDecimal(targetPaceStr);
       anchorPacesToGoal(paces, goal);
       const peakKm = peakKmOverride || computePeakKm(goal, level, vdot);
-      const peakLongKm = capLongRunKm(goal, level, 999);
+      const peakLongKm = peakLongKmFor(goal, level, peakKm);
       const weeksToRace = weeksBetween(raceDate);
-      const { phase, weeklyKm, plan } = buildInitialRacePlan(goal, level, peakKm, peakLongKm, weeksToRace, paces);
+      const { phase, weeklyKm, plan } = buildInitialRacePlan(goal, level, peakKm, peakLongKm, weeksToRace, paces,
+        { ...motorFields, planStartWeeksToRace: weeksToRace, planWeek: 1 });
       newStudent = {
-        id, name, goal, level, pinHash, pinSalt, raceDate, targetPaceStr, paces, peakKm, peakLongKm, volumeOverrides: {}, longRunOverrides: {}, qualityStreaks: { q1: 0, q2: 0 }, weeksToRace, currentWeek: 1, planStartMonday,
+        id, name, goal, level, pinHash, pinSalt, raceDate, targetPaceStr, paces, peakKm, peakLongKm, ...motorFields, planStartWeeksToRace: weeksToRace, volumeOverrides: {}, longRunOverrides: {}, qualityStreaks: { q1: 0, q2: 0 }, weeksToRace, currentWeek: 1, planStartMonday,
         weeks: { 1: { weeklyKm, phase, plan, log: emptyLog(), note: `Fase inicial: ${PHASE_LABEL[phase]}.`, submitted: false } },
       };
     }
     if (!forceCreate) {
       const firstWeekPlan = newStudent.weeks[1]?.plan;
-      const warnings = getAnomalyWarnings(firstWeekPlan);
+      const warnings = [
+        ...(!isFitnessGoal(goal) ? getPeakWarnings(goal, level, newStudent.peakKm) : []),
+        ...getAnomalyWarnings(firstWeekPlan),
+      ];
       if (warnings.length) {
-        setPendingCreate({ args: { name, goal, level, pin, raceDate, targetPaceStr, peakKmOverride, fitnessStartWeek, planTiming, trainDays }, warnings });
+        setPendingCreate({ args: { name, goal, level, pin, raceDate, targetPaceStr, peakKmOverride, fitnessStartWeek, planTiming, trainDays, currentWeeklyKm, currentLongKm, qualityCapPct }, warnings });
         setBusy(false);
         return;
       }
@@ -3237,7 +3367,7 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
     };
     await safeSet(`student:${student.id}`, updated);
     const freshRoster3 = freshRoster3Before;
-    const newRoster = freshRoster3.map((r) => (r.id === student.id ? { ...r, weekNumber: updated.currentWeek, waitingApproval: false } : r));
+    const newRoster = freshRoster3.map((r) => (r.id === student.id ? { ...r, level: updated.level, weekNumber: updated.currentWeek, waitingApproval: false } : r));
     await safeSet("roster", newRoster);
     await pushReport({
       id: uid(), studentId: student.id, studentName: student.name, weekNumber: proposal.closedWeekNumber,
@@ -3356,12 +3486,16 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
       const taperWeeks = getTaperWeeks(student.goal);
       const weeksToRaceNow = student.weeksToRace != null ? student.weeksToRace : weeksBetween(student.raceDate);
       const cyclePosNow = getCyclePosition(weeksToRaceNow, taperWeeks);
-      const qpNow = suggestQualityPaces(student.goal, week.phase, weeksToRaceNow, taperWeeks, cyclePosNow, student.level);
+      const v2 = usaMotor2(student);
+      const qpNow = v2
+        ? suggestQualityPacesV2(student.goal, week.phase, weeksToRaceNow, taperWeeks, cyclePosNow, student.level, planWeekOf(student, weeksToRaceNow))
+        : suggestQualityPaces(student.goal, week.phase, weeksToRaceNow, taperWeeks, cyclePosNow, student.level);
       const q1PaceKey = cwQuality?.q1Type || (q1Day ? q1Day.paceKey : "E");
       const q2PaceKey = cwQuality?.q2Type || (q2Day ? q2Day.paceKey : "E");
       let newPlan = buildRacePlan(
         student.goal, week.phase, student.level, newWeeklyKm, newLongKm,
-        q1PaceKey, q2PaceKey, student.paces || {}, weeksToRaceNow, taperWeeks
+        q1PaceKey, q2PaceKey, student.paces || {}, weeksToRaceNow, taperWeeks,
+        v2 ? { motor: MOTOR_ACTUAL, qualityCapPct: qualityCapPctOf(student) } : undefined
       );
       const q1TypeChanged = cwQuality?.q1Type && cwQuality.q1Type !== qpNow.q1;
       const q2TypeChanged = cwQuality?.q2Type && cwQuality.q2Type !== qpNow.q2;
@@ -3373,10 +3507,13 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
         if (d.slot === "q1" && q1Dist) { const next = { ...d, distOverride: q1Dist, repsOverride: q1Reps || undefined }; return { ...next, km: computeImpliedKm(next) }; }
         if (d.slot === "q2" && q2Dist && q2PaceKey === "brokenT") { const next = { ...d, distOverride: q2Dist, brokenTRefMin: q2TypeChanged ? null : qpNow.q2RefMin, recoveryOverride: q2Reps }; return { ...next, km: computeImpliedKm(next) }; }
         if (d.slot === "q2" && q2Dist && q2PaceKey === "I") { const next = { ...d, distOverride: q2Dist, repsOverride: q2Reps || undefined }; return { ...next, km: computeImpliedKm(next) }; }
+        if (d.slot === "q2" && q2Dist && (q2PaceKey === "fartlek" || q2PaceKey === "hills")) { const next = { ...d, distOverride: q2Dist, repsOverride: q2Reps || undefined, ...(q2TypeChanged || cwQuality?.q2Dist || qpNow.q2Rec == null ? {} : { recoveryOverride: qpNow.q2Rec }) }; return { ...next, km: computeImpliedKm(next) }; }
         if (d.slot === "q3" && cwQuality?.q3Type) return { ...d, paceKey: cwQuality.q3Type === "broken" ? "broken" : "E", runWalk: cwQuality.q3Type !== "broken" };
         return d;
       });
-      newPlan = balanceWeeklyVolume(newPlan, newWeeklyKm);
+      newPlan = v2
+        ? cerrarSemanaV2(newPlan, newWeeklyKm, { qualityCapPct: qualityCapPctOf(student), phase: week.phase, peakLongKm: student.peakLongKm })
+        : balanceWeeklyVolume(newPlan, newWeeklyKm);
       updated = { ...updated, weeks: { ...updated.weeks, [cw]: { ...week, weeklyKm: newWeeklyKm, plan: newPlan } } };
     }
     await safeSet(`student:${student.id}`, updated);
@@ -3454,8 +3591,11 @@ const resetPlan = async () => {
     } else {
       const weeksToRace = weeksBetween(student.raceDate);
       const peakLongKm = student.peakLongKm || capLongRunKm(student.goal, student.level, 999);
-      const { phase, weeklyKm, plan } = buildInitialRacePlan(student.goal, student.level, student.peakKm, peakLongKm, weeksToRace, student.paces || {});
-      updated = { ...student, currentWeek: 1, weeksToRace, peakLongKm, volumeOverrides: {}, longRunOverrides: {}, qualityStreaks: { q1: 0, q2: 0 }, weeks: { 1: { weeklyKm, phase, plan, log: emptyLog(), note: "Plan reiniciado desde cero.", submitted: false } } };
+      const opts = usaMotor2(student)
+        ? { motor: MOTOR_ACTUAL, qualityCapPct: qualityCapPctOf(student), currentWeeklyKm: student.currentWeeklyKm, currentLongKm: student.currentLongKm, planStartWeeksToRace: weeksToRace, planWeek: 1 }
+        : undefined;
+      const { phase, weeklyKm, plan } = buildInitialRacePlan(student.goal, student.level, student.peakKm, peakLongKm, weeksToRace, student.paces || {}, opts);
+      updated = { ...student, currentWeek: 1, weeksToRace, peakLongKm, ...(opts ? { planStartWeeksToRace: weeksToRace, desdePrincipiante: false } : {}), volumeOverrides: {}, longRunOverrides: {}, qualityStreaks: { q1: 0, q2: 0 }, weeks: { 1: { weeklyKm, phase, plan, log: emptyLog(), note: "Plan reiniciado desde cero.", submitted: false } } };
     }
     await safeSet(`student:${student.id}`, updated);
     const freshRoster4 = (await safeGet("roster")) || [];
