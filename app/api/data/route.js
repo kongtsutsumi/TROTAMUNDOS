@@ -4,8 +4,8 @@ import { kvGet, kvSet, kvDelete } from "../../../lib/supabaseAdmin";
 import { verifySessionToken, SESSION_COOKIE } from "../../../lib/session";
 import { canRead, canWrite, canDelete, sanitizeForSession } from "../../../lib/permissions";
 import { publishDueWeekFor, sanitizeLocalDate } from "../../../lib/autoPublish";
-import { reenviarSemanasCambiadas } from "../../../lib/intervals-push";
-import { fusionarAlertas } from "../../../lib/intervals-icu.mjs";
+import { reenviarSemanasCambiadas, leerAjustesReloj } from "../../../lib/intervals-push";
+import { fusionarAlertas, alertasHabilitadasPorCoach } from "../../../lib/intervals-icu.mjs";
 import { estadoDeLaSemana } from "../../../lib/estado-semana.mjs";
 
 async function getSession() {
@@ -190,6 +190,7 @@ export async function POST(request) {
     const records = await Promise.all(roster.map((r) => kvGet(`student:${r.id}`)));
     const summary = {};
     const hoy = hoyEnLima();
+    const alertasGeneral = (await leerAjustesReloj()).alertasRitmo;
     roster.forEach((r, i) => {
       const s = records[i];
       if (!s) return;
@@ -225,6 +226,9 @@ export async function POST(request) {
           ? {
               problema: s.intervals?.errorDeLectura === "permiso-revocado" || s.intervals?.ultimoEnvio?.ok === false,
               ultimoEnvio: s.intervals?.ultimoEnvio?.fecha ?? null,
+              // Alertas de ritmo: si el coach se las activó, y si el alumno las apagó.
+              alertas: alertasHabilitadasPorCoach(s, alertasGeneral),
+              alumnoLasApago: s.alertasRitmo?.alumno === false,
             }
           : null,
         // Semáforo de la semana actual para el listado: "Al día", "Le falta 1 sesión"…

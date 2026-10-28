@@ -14,7 +14,7 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { kvGet } from "../../../lib/supabaseAdmin";
 import { verifySessionToken, SESSION_COOKIE } from "../../../lib/session";
-import { enviarSemanaAlReloj, desconectarReloj, estaConectado, leerAjustesReloj, guardarAjustesReloj, reenviarATodos } from "../../../lib/intervals-push";
+import { enviarSemanaAlReloj, desconectarReloj, estaConectado, leerAjustesReloj } from "../../../lib/intervals-push";
 import { alertasHabilitadasPorCoach, alertasEfectivas } from "../../../lib/intervals-icu.mjs";
 import { traerDelReloj } from "../../../lib/intervals-pull";
 import { urlDeAutorizacion, estaConfigurado } from "../../../lib/intervals-oauth";
@@ -32,17 +32,11 @@ export async function POST(request) {
   try { body = await request.json(); } catch (e) { return NextResponse.json({ error: "Petición inválida" }, { status: 400 }); }
   const { op, studentId, weekNum } = body || {};
 
-  // --- Interruptor general de alertas de ritmo (solo el coach) ---
-  // Al cambiarlo se reenvían las semanas en curso y futuras de todos los alumnos con reloj.
+  // --- El antiguo interruptor general de alertas (solo lectura) ---
+  // Las alertas se activan alumno por alumno. Este valor solo sirve de punto de partida
+  // para quien el coach todavía no eligió nada; ya no se puede cambiar.
   if (op === "alertasGeneral") {
     if (session.role !== "coach") return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
-    if (typeof body.activar === "boolean") {
-      const antes = await leerAjustesReloj();
-      const ok = await guardarAjustesReloj({ alertasRitmo: body.activar });
-      if (!ok) return NextResponse.json({ error: "No se pudo guardar. Prueba de nuevo." }, { status: 500 });
-      const reenvio = antes.alertasRitmo !== body.activar ? await reenviarATodos() : null;
-      return NextResponse.json({ ok: true, alertasRitmo: body.activar, reenvio });
-    }
     return NextResponse.json({ ok: true, ...(await leerAjustesReloj()) });
   }
 

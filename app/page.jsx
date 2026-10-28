@@ -3,10 +3,11 @@ import { safeGet, safeSet, safeDelete, safeGetWithRetry, updateRosterEntry, fetc
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { fusionarLoDelReloj, extrasDelDia, kmAdicionalesDe, paradasDeLaSesion } from "../lib/intervals-read.mjs";
 import { textoDelDetalle } from "../lib/estado-semana.mjs";
+import { alertasHabilitadasPorCoach } from "../lib/intervals-icu.mjs";
 import {
   Users, User, Plus, ArrowLeft, Check, Flag, TrendingUp, TrendingDown,
   Minus, X, ChevronRight, ChevronLeft, ChevronDown, RotateCw, Activity, Search, AlertCircle, Lock, KeyRound,
-  FileText, RefreshCcw, Trash2, BarChart2, Clock, Edit3, Download, QrCode, CalendarDays, Watch, LogOut, Megaphone, Pin, Send, Link2, Home, Wallet
+  FileText, RefreshCcw, Trash2, BarChart2, Clock, Edit3, Download, QrCode, CalendarDays, Watch, LogOut, Megaphone, Pin, Send, Link2, Home, Wallet, Bell, BellOff
 } from "lucide-react";
 import { useMyMembership, MembershipCard, PagosAlumno, CobrosPanel, MembershipBadge, useMemberships, statusOf } from "../components/pagos";
 import {
@@ -3151,32 +3152,18 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
   // está guardado, esto solo lo empuja al reloj. Si falla, se dice por qué y no se toca nada.
   const [enviandoReloj, setEnviandoReloj] = useState(false);
   const [envioReloj, setEnvioReloj] = useState(null);
-  // Alertas de ritmo en el reloj: el interruptor general (para todos los alumnos).
-  const [alertasGeneral, setAlertasGeneral] = useState(null);
-  const [avisoAlertas, setAvisoAlertas] = useState(null);
+  // Alertas de ritmo: se activan alumno por alumno. El antiguo interruptor general solo se
+  // lee, como punto de partida de quien todavía no tiene nada elegido.
+  const [alertasGeneral, setAlertasGeneral] = useState(false);
   useEffect(() => { intervalsOp("alertasGeneral").then((r) => { if (r?.ok) setAlertasGeneral(!!r.alertasRitmo); }); }, []);
-  const cambiarAlertasGeneral = async () => {
-    const activar = !alertasGeneral;
-    setAvisoAlertas("Guardando y actualizando los relojes…");
-    const r = await intervalsOp("alertasGeneral", undefined, { activar });
-    if (r?.ok) {
-      setAlertasGeneral(activar);
-      const n = r.reenvio?.alumnos ?? 0;
-      setAvisoAlertas(activar
-        ? `Alertas activadas. Se actualizó el reloj de ${n} alumno${n === 1 ? "" : "s"} conectado${n === 1 ? "" : "s"}.`
-        : `Alertas desactivadas. Se actualizó el reloj de ${n} alumno${n === 1 ? "" : "s"} conectado${n === 1 ? "" : "s"}.`);
-    } else {
-      setAvisoAlertas("No se pudo cambiar. Prueba de nuevo.");
-    }
-    setTimeout(() => setAvisoAlertas(null), 6000);
-  };
-  // Para un alumno puntual: "general" (sigue el interruptor general), "on" u "off".
+  // Activar o desactivar las alertas de este alumno ("on" u "off"). Al guardar, su reloj
+  // se actualiza solo (el servidor reenvía las semanas en curso y futuras).
   const cambiarAlertasAlumno = async (modo) => {
     if (!student) return;
     const updated = { ...student, alertasRitmo: { ...(student.alertasRitmo || {}), coach: modo } };
     setBusy(true);
     const ok = await safeSet(`student:${student.id}`, updated);
-    if (ok) setStudent(updated);
+    if (ok) { setStudent(updated); loadRosterProgress(); }
     setBusy(false);
   };
   const enviarSemanaAlReloj = async (weekNum) => {
@@ -4061,20 +4048,24 @@ const resetPlan = async () => {
                   </button>
                 )}
                 {(student.intervals?.conectado || student.intervals?.token || student.intervals?.pruebaConClaveDelCoach) && (
-                  <div className="w-full rounded-lg px-3 py-2 text-xs flex flex-wrap items-center gap-2" style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, color: COLORS.textMuted }}>
-                    <Watch size={13} style={{ color: COLORS.lane }} />
-                    <span style={{ color: COLORS.lane }}>Alertas de ritmo (±5 s, calidad y fondos):</span>
-                    <select value={student.alertasRitmo?.coach || "general"} onChange={(e) => cambiarAlertasAlumno(e.target.value)} disabled={busy}
-                      className="px-2 py-1 rounded" style={{ background: COLORS.bg, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
-                      <option value="general">Como el general ({alertasGeneral ? "activadas" : "desactivadas"})</option>
-                      <option value="on">Activadas para este alumno</option>
-                      <option value="off">Desactivadas para este alumno</option>
-                    </select>
-                    {student.alertasRitmo?.alumno === false && ((student.alertasRitmo?.coach || "general") === "on" || ((student.alertasRitmo?.coach || "general") === "general" && alertasGeneral)) && (
-                      <span>· El alumno las apagó en su app.</span>
+                  <div className="w-full rounded-lg px-3 py-2.5 text-xs" style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, color: COLORS.textMuted }}>
+                    <label className="flex items-center justify-between gap-3 cursor-pointer">
+                      <span className="flex items-center gap-2">
+                        <Bell size={14} style={{ color: alertasHabilitadasPorCoach(student, alertasGeneral) ? COLORS.easy : COLORS.textMuted }} />
+                        <span>
+                          <span className="block text-sm font-semibold" style={{ color: COLORS.lane }}>Alertas de ritmo en el reloj</span>
+                          <span className="block">±5 s, solo en calidad y fondos</span>
+                        </span>
+                      </span>
+                      <input type="checkbox" className="w-5 h-5 shrink-0" disabled={busy}
+                        checked={alertasHabilitadasPorCoach(student, alertasGeneral)}
+                        onChange={(e) => cambiarAlertasAlumno(e.target.checked ? "on" : "off")} />
+                    </label>
+                    {alertasHabilitadasPorCoach(student, alertasGeneral) && student.alertasRitmo?.alumno === false && (
+                      <span className="block mt-1">El alumno las apagó desde su app.</span>
                     )}
                     {student.intervals?.umbral?.motivo === "sin-permiso" && (
-                      <span style={{ color: COLORS.moderate }}>· Para que funcionen, el alumno debe volver a conectar su reloj (permiso nuevo).</span>
+                      <span className="block mt-1" style={{ color: COLORS.moderate }}>Para que funcionen, el alumno debe volver a conectar su reloj (permiso nuevo).</span>
                     )}
                   </div>
                 )}
@@ -4375,14 +4366,6 @@ const resetPlan = async () => {
                 style={{ background: statusFilter === "paused" ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.track}55` }}>
                 ⏸ {pausedCount} pausados
               </button>
-              {alertasGeneral != null && (
-                <button onClick={cambiarAlertasGeneral} title="Alertas de ritmo (±5 s) en el reloj, solo en calidad y fondos. Puedes cambiarlo para un alumno puntual desde su ficha."
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold"
-                  style={{ background: alertasGeneral ? COLORS.easy + "33" : COLORS.surface2, color: COLORS.lane, border: `1px solid ${alertasGeneral ? COLORS.easy : COLORS.border}` }}>
-                  <Watch size={12} /> Alertas de ritmo: {alertasGeneral ? "activadas" : "desactivadas"}
-                </button>
-              )}
-              {avisoAlertas && <span className="w-full text-xs px-1" style={{ color: COLORS.textMuted }}>{avisoAlertas}</span>}
               <select value={goalFilter} onChange={(e) => setGoalFilter(e.target.value)}
                 className="px-3 py-1.5 rounded-full text-xs font-semibold" style={{ background: goalFilter ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.track}55` }}>
                 <option value="">Todos los objetivos</option>
@@ -4424,6 +4407,15 @@ const resetPlan = async () => {
                           : "Reloj conectado"}
                         aria-label={rosterProgress[r.id].reloj.problema ? "Reloj con problemas" : "Reloj conectado"}>
                         <Watch size={14} style={{ color: rosterProgress[r.id].reloj.problema ? COLORS.hard : COLORS.easy }} />
+                      </span>
+                    )}
+                    {rosterProgress[r.id]?.reloj?.alertas && (
+                      <span className="inline-flex shrink-0"
+                        title={rosterProgress[r.id].reloj.alumnoLasApago ? "Alertas de ritmo activadas, pero el alumno las apagó" : "Alertas de ritmo activadas"}
+                        aria-label="Alertas de ritmo activadas">
+                        {rosterProgress[r.id].reloj.alumnoLasApago
+                          ? <BellOff size={13} style={{ color: COLORS.textMuted }} />
+                          : <Bell size={13} style={{ color: COLORS.easy }} />}
                       </span>
                     )}
                   </div>
