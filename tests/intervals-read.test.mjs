@@ -469,6 +469,61 @@ console.log("\n▸ Tiempo total y en movimiento (para el coach)");
   check("Sin tiempo total no inventa uno", sinTotal.segTotal === null && sinTotal.segMovimiento === 1500);
 }
 
+console.log("\n▸ Dónde paró (solo calidad y fondos, solo si paró 10 s o más)");
+{
+  const vuelta = (km, segMov, parado = 0) => ({ km, seg: segMov, segMov, segTotal: segMov + parado });
+  const diaI = { paceKey: "I", type: "Intervalos", km: 10, distOverride: 1, repsOverride: 6, paceOverride: 4.5, recoveryOverride: 3, easyPace: 6 };
+  const sesion = (paradas = {}) => {
+    const v = [vuelta(3, 1080, paradas.wu || 0)];
+    for (let r = 1; r <= 6; r++) {
+      v.push(vuelta(1, 270, paradas["s" + r] || 0));
+      if (r < 6) v.push(vuelta(0.45, 180, paradas["r" + r] || 0));
+    }
+    v.push(vuelta(2, 720, paradas.cd || 0));
+    return { vueltas: v };
+  };
+  check("Sin paradas no aparece nada", R.paradasDeLaSesion(diaI, sesion(), 6).length === 0);
+  const p1 = R.paradasDeLaSesion(diaI, sesion({ s4: 25, r2: 70 }), 6);
+  check("Encuentra la parada dentro de la serie 4", p1.some((p) => p.donde === "Serie 4" && p.detenidoSeg === 25 && p.tipo === "trabajo"), JSON.stringify(p1));
+  check("Encuentra la parada en la recuperación después de la serie 2", p1.some((p) => p.donde === "Recuperación después de la serie 2" && p.detenidoSeg === 70), JSON.stringify(p1));
+  check("Solo esas dos", p1.length === 2, JSON.stringify(p1));
+  check("Una parada de 8 s no se marca", R.paradasDeLaSesion(diaI, sesion({ s3: 8 }), 6).length === 0);
+  check("Parar en el calentamiento o el enfriamiento no se marca",
+    R.paradasDeLaSesion(diaI, sesion({ wu: 120, cd: 90 }), 6).length === 0);
+  // Recuperación quieto: casi sin distancia.
+  const quieto = sesion(); quieto.vueltas[4] = { km: 0.01, seg: 5, segMov: 5, segTotal: 180 };
+  const p2 = R.paradasDeLaSesion(diaI, quieto, 6);
+  check("Recuperación quieto (sin moverse) cuenta como parada", p2.length === 1 && p2[0].donde === "Recuperación después de la serie 2" && p2[0].detenidoSeg === 175, JSON.stringify(p2));
+  // Una vuelta de más marcada a mano no corre la numeración de las series.
+  const extra = sesion({ s5: 30 }); extra.vueltas.splice(2, 0, vuelta(0.1, 40));
+  check("Una vuelta extra no desordena la numeración", R.paradasDeLaSesion(diaI, extra, 6)[0]?.donde === "Serie 5", JSON.stringify(R.paradasDeLaSesion(diaI, extra, 6)));
+
+  // Con la marca WORK/RECOVERY de intervals.icu: una serie lenta (paró mucho) igual es serie.
+  const marc = sesion({ s2: 40 }); marc.vueltas.forEach((v, k) => { v.t = k === 0 || k === marc.vueltas.length - 1 ? "RECOVERY" : (k % 2 === 1 ? "WORK" : "RECOVERY"); });
+  marc.vueltas[3] = { ...marc.vueltas[3], segMov: 400, seg: 400, segTotal: 440 }; // serie 2 muy lenta
+  check("Con la marca de intervals.icu, una serie lenta sigue siendo serie", R.paradasDeLaSesion(diaI, marc, 6)[0]?.donde === "Serie 2", JSON.stringify(R.paradasDeLaSesion(diaI, marc, 6)));
+
+  const diaT = { paceKey: "T", type: "Umbral", km: 12, distOverride: 30, paceOverride: 4.6, easyPace: 6 };
+  const tempo = { vueltas: [vuelta(3, 1080), vuelta(6.5, 1794, 40), vuelta(2, 720)] };
+  const fracc = { paceKey: "brokenT", type: "Umbral fraccionado", km: 12, distOverride: 11, repsOverride: 3, recoveryOverride: 3, paceOverride: 4.4, easyPace: 6 };
+  const fv = { vueltas: [vuelta(3, 1080), vuelta(2.5, 660), vuelta(0.45, 180, 60), vuelta(2.5, 660), vuelta(0.45, 180), vuelta(2.5, 660), vuelta(2, 720)] };
+  check("Bloques: 'Recuperación después del bloque 1' (bien escrito)", R.paradasDeLaSesion(fracc, fv, 6)[0]?.donde === "Recuperación después del bloque 1", JSON.stringify(R.paradasDeLaSesion(fracc, fv, 6)));
+  check("En umbral continuo se nombra 'Bloque 1'", R.paradasDeLaSesion(diaT, tempo, 6)[0]?.donde === "Bloque 1", JSON.stringify(R.paradasDeLaSesion(diaT, tempo, 6)));
+
+  const fondo = { paceKey: "long", slot: "long", type: "Fondo", km: 20, longProgressive: true, longFastKm: 5, easyPace: 6, marathonPace: 5 };
+  const fPasos = { vueltas: [vuelta(3, 1080, 60), vuelta(10, 3600, 95), vuelta(5, 1500), vuelta(2, 720)] };
+  const pf = R.paradasDeLaSesion(fondo, fPasos, 6);
+  check("Fondo iniciado desde el reloj: nombra el paso", pf.length === 1 && pf[0].donde === "En el bloque principal" && pf[0].detenidoSeg === 95, JSON.stringify(pf));
+  const fKm = { vueltas: Array.from({ length: 20 }, (_, k) => vuelta(1, 330, k === 12 ? 50 : 0)) };
+  const pk = R.paradasDeLaSesion(fondo, fKm, 6);
+  check("Fondo con vueltas por km: dice en qué km", pk.length === 1 && pk[0].donde === "Entre el km 12 y el 13", JSON.stringify(pk));
+
+  const suave = { paceKey: "E", type: "Suave", km: 8, easyPace: 6 };
+  check("En un suave no se marca nada", R.paradasDeLaSesion(suave, { vueltas: [vuelta(4, 1440, 60), vuelta(4, 1440, 60)] }, 6).length === 0);
+  check("Las vueltas guardan su tiempo total y en movimiento",
+    R.resumenDeActividad({ id: 1, distance: 1000, moving_time: 300, elapsed_time: 300 }, [{ distance: 1000, moving_time: 270, elapsed_time: 295 }]).vueltas[0].segTotal === 295);
+}
+
 console.log(`\n${"═".repeat(50)}`);
 console.log(`  ${passed} pruebas pasaron, ${failed} fallaron`);
 if (failures.length) {

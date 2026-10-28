@@ -1,7 +1,7 @@
 "use client";
 import { safeGet, safeSet, safeDelete, safeGetWithRetry, updateRosterEntry, fetchRosterSummary, intervalsOp, muroOp, safeGetPersonal, safeSetPersonal, safeDeletePersonal, authStatus, coachSetup, coachLogin, studentList, studentLogin, logout } from "../lib/storage";
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { fusionarLoDelReloj, extrasDelDia, kmAdicionalesDe } from "../lib/intervals-read.mjs";
+import { fusionarLoDelReloj, extrasDelDia, kmAdicionalesDe, paradasDeLaSesion } from "../lib/intervals-read.mjs";
 import { textoDelDetalle } from "../lib/estado-semana.mjs";
 import {
   Users, User, Plus, ArrowLeft, Check, Flag, TrendingUp, TrendingDown,
@@ -1413,6 +1413,25 @@ function DatosDelReloj({ reloj, day, esCoach, titulo = "Del reloj" }) {
           </>
         )}
       </div>
+
+      {/* Solo el coach, y solo si pasó: dónde se detuvo (serie, recuperación o fondo). */}
+      {esCoach && (() => {
+        const paradas = paradasDeLaSesion(day, reloj, day?.easyPace);
+        if (!paradas.length) return null;
+        return (
+          <div className="mt-2 rounded-md px-2.5 py-1.5" style={{ background: COLORS.moderate + "18", border: `1px solid ${COLORS.moderate}55` }}>
+            <div className="text-[11px] font-semibold flex items-center gap-1" style={{ color: COLORS.moderate }}>
+              <AlertCircle size={11} /> {paradas.length === 1 ? "Se detuvo una vez" : `Se detuvo ${paradas.length} veces`}
+            </div>
+            {paradas.map((p, i) => (
+              <div key={i} className="text-[11px] flex justify-between gap-3" style={{ color: COLORS.lane }}>
+                <span>{p.donde}</span>
+                <span style={{ fontFamily: "'JetBrains Mono', monospace", color: COLORS.moderate }}>{duracionTexto(p.detenidoSeg)} detenido</span>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
 
       {/* Solo el coach: tiempo total contra tiempo en movimiento, para ver si paró. */}
       {esCoach && reloj.segTotal > 0 && reloj.segMovimiento > 0 && (() => {
