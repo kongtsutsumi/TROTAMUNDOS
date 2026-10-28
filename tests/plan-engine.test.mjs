@@ -990,6 +990,38 @@ console.log("\n▸ Traducción de las sesiones al formato de intervals.icu");
   check("Los tiempos mixtos se escriben m+s", IC.fmtTiempo(1.5) === "1m30s", IC.fmtTiempo(1.5));
   check("Un tiempo de cero no genera paso", IC.fmtTiempo(0) === null);
   check("El ritmo se escribe en min:seg por km", IC.fmtRitmo(4.5) === "4:30/km Pace", IC.fmtRitmo(4.5));
+  check("El rango es ±5 s, del más lento al más rápido", IC.fmtRango(4.5) === "4:35-4:25/km Pace", IC.fmtRango(4.5));
+  check("El rango no escribe 4:60", IC.fmtRango(4.999) === "5:05-4:55/km Pace", IC.fmtRango(4.999));
+  check("El ritmo como texto no es un objetivo", IC.ritmoComoTexto(5 + 22 / 60) === "(ritmo 5'22)" && !/Pace|\/km/.test(IC.ritmoComoTexto(5.3)));
+
+  // Quién decide las alertas: el coach habilita (general o por alumno); el alumno, solo si está habilitado.
+  const al = (coach, alumno) => ({ alertasRitmo: { ...(coach ? { coach } : {}), ...(alumno !== undefined ? { alumno } : {}) } });
+  check("Sin nada configurado y el general apagado: sin alertas", IC.alertasEfectivas({}, false) === false);
+  check("General encendido: el alumno las tiene", IC.alertasEfectivas({}, true) === true);
+  check("General encendido, el alumno las apaga: sin alertas", IC.alertasEfectivas(al(null, false), true) === false);
+  check("General apagado pero el coach las activa a este alumno", IC.alertasEfectivas(al("on"), false) === true);
+  check("El coach las desactiva a este alumno: aunque el general esté encendido, no", IC.alertasEfectivas(al("off"), true) === false);
+  check("Si el coach las desactivó, lo que quiera el alumno no cuenta", IC.alertasEfectivas(al("off", true), true) === false);
+  check("El coach decide si el alumno puede tocarlas", IC.alertasHabilitadasPorCoach(al("off", true), true) === false && IC.alertasHabilitadasPorCoach(al("general"), true) === true);
+  // Al guardar, cada uno cambia solo su llave.
+  const g = { coach: "on", alumno: false };
+  check("El alumno no puede cambiar la llave del coach", JSON.stringify(IC.fusionarAlertas("student", { coach: "off", alumno: true }, g)) === JSON.stringify({ coach: "on", alumno: true }));
+  check("El coach no pisa la preferencia del alumno con una copia vieja", JSON.stringify(IC.fusionarAlertas("coach", { coach: "off", alumno: true }, g)) === JSON.stringify({ coach: "off", alumno: false }));
+  check("Un valor raro del coach no se guarda", IC.fusionarAlertas("coach", { coach: "siempre" }, {}) === undefined);
+  check("Sin nada que guardar no se crea el campo", IC.fusionarAlertas("student", undefined, undefined) === undefined);
+
+  // Ritmo umbral en intervals.icu (m/s): se pone si falta o si lo puso esta app; se respeta el del alumno.
+  const T = 4 + 36 / 60; const ms = IC.ritmoAMetrosPorSegundo(T);
+  check("4:36/km son 3,6232 m/s", ms === 3.6232, ms);
+  check("Sin umbral: se pone", IC.decidirUmbral({ ritmoT: T, actual: null }).accion === "poner");
+  check("Ya está el mismo: no se toca", IC.decidirUmbral({ ritmoT: T, actual: ms }).accion === "nada");
+  check("Lo puso esta app y cambió el VDOT: se actualiza", IC.decidirUmbral({ ritmoT: T, actual: 3.5, puestoPorNosotros: 3.5 }).accion === "poner");
+  check("Lo puso el alumno: se respeta", IC.decidirUmbral({ ritmoT: T, actual: 3.4, puestoPorNosotros: null }).motivo === "puesto-por-el-alumno");
+
+  check("Calidad y fondos se marcan para alertas; suaves no",
+    IC.tipoParaAlertas({ paceKey: "I" }) === "calidad" && IC.tipoParaAlertas({ paceKey: "long" }) === "fondo"
+    && IC.tipoParaAlertas({ paceKey: "E", slot: "long" }) === "fondo" && IC.tipoParaAlertas({ paceKey: "E" }) === null
+    && IC.tipoParaAlertas({ paceKey: "E", runWalk: true }) === null);
 
   const semana = (goalId, fase, nivel, km, fondo, q1, q2, semanasCarrera) => {
     const plan = E.buildRacePlan(goalId, fase, nivel, km, fondo, q1, q2, paces, semanasCarrera, E.getTaperWeeks(goalId));
@@ -1038,8 +1070,13 @@ console.log("\n▸ Traducción de las sesiones al formato de intervals.icu");
     const t = series.description;
     check("Las series se agrupan en un bloque de repeticiones", /^\d+x$/m.test(t), t);
     check("Las repeticiones llevan su distancia en metros", /\d+mtr/.test(t), t);
-    check("Las repeticiones llevan ritmo objetivo", /mtr \d+:\d\d\/km Pace/.test(t), t);
-    check("La recuperación de las series NO queda vacía", /Recuperación \d+m/.test(t), t);
+    check("Sin alertas, las repeticiones NO llevan ritmo objetivo (no hay alarma)", !/Pace/.test(t), t);
+    check("…pero el ritmo se ve escrito en el paso", /Repetición \(ritmo \d+'\d\d\) \d+mtr/.test(t), t);
+    const conAlertas = IC.semanaAEventos(alumno, 3, { alertas: true }).find((e) => e.name.includes("Series")).description;
+    check("Con alertas, las repeticiones llevan un rango de ±5 s", /mtr \d+:\d\d-\d+:\d\d\/km Pace/.test(conAlertas), conAlertas);
+    check("Con alertas, el calentamiento y la recuperación siguen sin objetivo",
+      !/(Warm-up|Recuperación|Cool-down)[^\n]*Pace/.test(conAlertas), conAlertas);
+    check("La recuperación de las series NO queda vacía", /Recuperación[^\n]* \d+m\b/.test(t), t);
     check("El cool-down queda fuera del bloque de repeticiones",
       t.trim().split("\n").pop().includes("Cool-down"), t);
   }
@@ -1048,14 +1085,20 @@ console.log("\n▸ Traducción de las sesiones al formato de intervals.icu");
   // "600m" en su sintaxis significa 600 MINUTOS. Si una distancia menor a 1 km se
   // escribiera con "m" en vez de "mtr", el alumno recibiría una serie de diez horas.
   let revisadas = 0, sinRitmo = 0, pasoVacio = 0, unidadPeligrosa = 0, bloqueMalFormado = 0;
+  let suaveConObjetivo = 0, apagadoConObjetivo = 0, rangoMal = 0;
   for (const goalId of ["10k", "21k", "42k"]) {
     for (const nivel of ["principiante", "intermedio1", "intermedio2", "avanzado1", "avanzado2"]) {
       for (const fase of ["base", "build", "peak", "taper"]) {
         for (const [km, fondo] of [[30, 10], [55, 16], [90, 26]]) {
           const qp = E.suggestQualityPaces(goalId, fase, 6, E.getTaperWeeks(goalId), E.getCyclePosition(6, 1), nivel);
           const s = semana(goalId, fase, nivel, km, fondo, qp.q1, qp.q2, 6);
-          for (const ev of IC.semanaAEventos(s, 3)) {
+          for (const ev of IC.semanaAEventos(s, 3, { alertas: false })) {
+            if (/Pace/.test(ev.description)) apagadoConObjetivo++;
+          }
+          for (const ev of IC.semanaAEventos(s, 3, { alertas: true })) {
             revisadas++;
+            const dia = s.weeks[3].plan[Number(ev.external_id.split("-d")[1])];
+            const tipo = IC.tipoParaAlertas(dia);
             const lineas = ev.description.split("\n");
             for (const l of lineas) {
               if (!l.startsWith("- ")) continue;
@@ -1064,7 +1107,14 @@ console.log("\n▸ Traducción de las sesiones al formato de intervals.icu");
               // Una distancia en metros jamás puede escribirse con "m" suelta.
               if (/\b\d{3,4}m\b(?!tr)/.test(l)) unidadPeligrosa++;
             }
-            if (!/\d+:\d\d\/km Pace/.test(ev.description)) sinRitmo++;
+            // Calidad y fondos: al menos un bloque con rango. Suaves y run/walk: ninguno.
+            const conBloque = (E.buildLiveSegments(dia, s.paces.E) || []).some((seg) => IC.pasoConAlerta(seg, dia));
+            if (tipo && conBloque && !/\d+:\d\d-\d+:\d\d\/km Pace/.test(ev.description)) sinRitmo++;
+            if (!tipo && /Pace/.test(ev.description)) suaveConObjetivo++;
+            for (const m of ev.description.matchAll(/(\d+):(\d\d)-(\d+):(\d\d)\/km Pace/g)) {
+              const lento = +m[1] * 60 + +m[2], rapido = +m[3] * 60 + +m[4];
+              if (lento - rapido !== 10) rangoMal++;
+            }
             // Un bloque "Nx" necesita línea en blanco antes y después.
             lineas.forEach((l, k) => {
               if (!/^\d+x$/.test(l)) return;
@@ -1076,7 +1126,10 @@ console.log("\n▸ Traducción de las sesiones al formato de intervals.icu");
     }
   }
   check("Hay sesiones suficientes que revisar", revisadas > 200, `revisadas ${revisadas}`);
-  check("Ninguna sesión sale sin ritmo objetivo", sinRitmo === 0, `${sinRitmo} de ${revisadas}`);
+  check("Con alertas, toda sesión de calidad o fondo lleva su rango", sinRitmo === 0, `${sinRitmo} de ${revisadas}`);
+  check("Con alertas, ningún suave ni run/walk lleva objetivo (no suena)", suaveConObjetivo === 0, `${suaveConObjetivo}`);
+  check("Sin alertas, ninguna sesión lleva objetivo (no suena nada)", apagadoConObjetivo === 0, `${apagadoConObjetivo}`);
+  check("Todos los rangos son de 10 s en total (±5 s)", rangoMal === 0, `${rangoMal}`);
   check("Ningún paso sale sin duración ni distancia", pasoVacio === 0, `${pasoVacio} pasos`);
   check("Ninguna distancia en metros usa la unidad equivocada", unidadPeligrosa === 0, `${unidadPeligrosa} pasos`);
   check("Ningún bloque de repeticiones queda mal formado", bloqueMalFormado === 0, `${bloqueMalFormado} bloques`);
@@ -1303,6 +1356,19 @@ console.log("\n▸ Qué semanas se reenvían al reloj después de guardar");
   const rango = IC.rangoDeSemana(base, 2);
   check("La semana 2 va de lunes a domingo", rango?.desde === "2026-10-12" && rango?.hasta === "2026-10-18", JSON.stringify(rango));
   check("Sin fecha de arranque no hay rango", IC.rangoDeSemana({ weeks: {} }, 1) === null);
+
+  // Prender o apagar las alertas cambia lo que llega al reloj: hay que reenviar lo que viene.
+  const conCalidad = copia(base);
+  conCalidad.weeks[2].plan = E.buildInitialRacePlan("42k", "intermedio2", 75, E.capLongRunKm("42k", "intermedio2", 999), 10, paces).plan;
+  const apagaAlumno = copia(conCalidad); apagaAlumno.alertasRitmo = { alumno: false };
+  check("El alumno apaga sus alertas: se reenvía la semana en curso",
+    JSON.stringify(IC.semanasParaReenviar(conCalidad, apagaAlumno, HOY, { general: true })) === "[2]",
+    JSON.stringify(IC.semanasParaReenviar(conCalidad, apagaAlumno, HOY, { general: true })));
+  check("Con el general apagado, que el alumno toque su preferencia no cambia nada",
+    IC.semanasParaReenviar(conCalidad, apagaAlumno, HOY, { general: false }).length === 0);
+  const coachActiva = copia(conCalidad); coachActiva.alertasRitmo = { coach: "on" };
+  check("El coach las activa a un alumno: se reenvía",
+    JSON.stringify(IC.semanasParaReenviar(conCalidad, coachActiva, HOY, { general: false })) === "[2]");
 }
 
 // ============================================================

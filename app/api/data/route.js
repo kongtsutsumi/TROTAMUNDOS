@@ -5,6 +5,7 @@ import { verifySessionToken, SESSION_COOKIE } from "../../../lib/session";
 import { canRead, canWrite, canDelete, sanitizeForSession } from "../../../lib/permissions";
 import { publishDueWeekFor, sanitizeLocalDate } from "../../../lib/autoPublish";
 import { reenviarSemanasCambiadas } from "../../../lib/intervals-push";
+import { fusionarAlertas } from "../../../lib/intervals-icu.mjs";
 import { estadoDeLaSemana } from "../../../lib/estado-semana.mjs";
 
 async function getSession() {
@@ -121,6 +122,9 @@ export async function POST(request) {
         raceDate: current.raceDate, targetPaceStr: current.targetPaceStr,
         currentWeek: current.currentWeek, name: current.name, id: current.id,
       };
+      // Alertas de ritmo: el alumno solo puede cambiar SU preferencia; la del coach se conserva.
+      const alertasAlumno = fusionarAlertas("student", value?.alertasRitmo, current.alertasRitmo);
+      if (alertasAlumno) toSave.alertasRitmo = alertasAlumno; else delete toSave.alertasRitmo;
     }
     if (session.role === "coach") {
       // El coach es dueño del plan, pero NO del registro de sesiones del alumno. Si el alumno
@@ -155,6 +159,9 @@ export async function POST(request) {
       if (current && typeof key === "string" && key.startsWith("student:") && toSave && typeof toSave === "object") {
         const { intervals: _delNavegador, ...resto } = toSave;
         toSave = current.intervals ? { ...resto, intervals: current.intervals } : resto;
+        // Alertas de ritmo: el coach cambia su llave; la preferencia del alumno se conserva.
+        const alertasCoach = fusionarAlertas("coach", value?.alertasRitmo, current.alertasRitmo);
+        if (alertasCoach) toSave.alertasRitmo = alertasCoach; else delete toSave.alertasRitmo;
       }
     }
     const ok = await kvSet(key, toSave);

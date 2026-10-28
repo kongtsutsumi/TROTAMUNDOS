@@ -459,6 +459,16 @@ console.log("\n▸ Leer las salidas adicionales de cada día");
 }
 
 // ============================================================
+console.log("\n▸ Tiempo total y en movimiento (para el coach)");
+{
+  const r = R.resumenDeActividad({ id: 9, distance: 10000, moving_time: 3000, elapsed_time: 3440 });
+  check("Guarda el tiempo total", r.segTotal === 3440, r.segTotal);
+  check("Guarda el tiempo en movimiento", r.segMovimiento === 3000, r.segMovimiento);
+  check("El ritmo sale del tiempo en movimiento", r.ritmo === "5:00", r.ritmo);
+  const sinTotal = R.resumenDeActividad({ id: 10, distance: 5000, moving_time: 1500 });
+  check("Sin tiempo total no inventa uno", sinTotal.segTotal === null && sinTotal.segMovimiento === 1500);
+}
+
 console.log(`\n${"═".repeat(50)}`);
 console.log(`  ${passed} pruebas pasaron, ${failed} fallaron`);
 if (failures.length) {

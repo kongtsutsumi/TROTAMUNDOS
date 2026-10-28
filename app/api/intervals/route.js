@@ -14,7 +14,8 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { kvGet } from "../../../lib/supabaseAdmin";
 import { verifySessionToken, SESSION_COOKIE } from "../../../lib/session";
-import { enviarSemanaAlReloj, desconectarReloj, estaConectado } from "../../../lib/intervals-push";
+import { enviarSemanaAlReloj, desconectarReloj, estaConectado, leerAjustesReloj, guardarAjustesReloj, reenviarATodos } from "../../../lib/intervals-push";
+import { alertasHabilitadasPorCoach, alertasEfectivas } from "../../../lib/intervals-icu.mjs";
 import { traerDelReloj } from "../../../lib/intervals-pull";
 import { urlDeAutorizacion, estaConfigurado } from "../../../lib/intervals-oauth";
 
@@ -30,6 +31,21 @@ export async function POST(request) {
   let body;
   try { body = await request.json(); } catch (e) { return NextResponse.json({ error: "Petición inválida" }, { status: 400 }); }
   const { op, studentId, weekNum } = body || {};
+
+  // --- Interruptor general de alertas de ritmo (solo el coach) ---
+  // Al cambiarlo se reenvían las semanas en curso y futuras de todos los alumnos con reloj.
+  if (op === "alertasGeneral") {
+    if (session.role !== "coach") return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
+    if (typeof body.activar === "boolean") {
+      const antes = await leerAjustesReloj();
+      const ok = await guardarAjustesReloj({ alertasRitmo: body.activar });
+      if (!ok) return NextResponse.json({ error: "No se pudo guardar. Prueba de nuevo." }, { status: 500 });
+      const reenvio = antes.alertasRitmo !== body.activar ? await reenviarATodos() : null;
+      return NextResponse.json({ ok: true, alertasRitmo: body.activar, reenvio });
+    }
+    return NextResponse.json({ ok: true, ...(await leerAjustesReloj()) });
+  }
+
   if (!op || !studentId) return NextResponse.json({ error: "Faltan datos" }, { status: 400 });
 
   const esElMismoAlumno = session.role === "student" && session.studentId === studentId;
@@ -50,6 +66,20 @@ export async function POST(request) {
       ultimoEnvio: student.intervals?.ultimoEnvio ?? null,
       ultimaLectura: student.intervals?.ultimaLectura ?? null,
       errorDeLectura: student.intervals?.errorDeLectura ?? null,
+      // Alertas de ritmo: si el coach las habilitó (el alumno solo puede tocarlas entonces),
+      // si están activas, y si intervals.icu necesita que el alumno vuelva a conectar.
+      alertas: await (async () => {
+        const general = (await leerAjustesReloj()).alertasRitmo;
+        const u = student.intervals?.umbral;
+        return {
+          general,
+          habilitadas: alertasHabilitadasPorCoach(student, general),
+          activas: alertasEfectivas(student, general),
+          modoCoach: student.alertasRitmo?.coach || "general",
+          reconectar: u?.motivo === "sin-permiso",
+          umbralPropio: !!u?.propio,
+        };
+      })(),
     });
   }
 

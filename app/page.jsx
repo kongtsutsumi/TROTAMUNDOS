@@ -1358,6 +1358,15 @@ function segundosATexto(seg) {
   return `${m}:${String(Math.round(seg - m * 60)).padStart(2, "0")}`;
 }
 
+// Duración legible: "1:12:30" o "7:20". Redondea al segundo antes de partir, para no
+// escribir nunca "4:60".
+function duracionTexto(seg) {
+  if (seg == null || !Number.isFinite(seg)) return null;
+  const t = Math.round(seg);
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
+  return h ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`;
+}
+
 function DatoDelReloj({ valor, etiqueta }) {
   if (valor == null || valor === "") return null;
   return (
@@ -1404,6 +1413,21 @@ function DatosDelReloj({ reloj, day, esCoach, titulo = "Del reloj" }) {
           </>
         )}
       </div>
+
+      {/* Solo el coach: tiempo total contra tiempo en movimiento, para ver si paró. */}
+      {esCoach && reloj.segTotal > 0 && reloj.segMovimiento > 0 && (() => {
+        const detenido = Math.max(0, reloj.segTotal - reloj.segMovimiento);
+        const paro = detenido >= 60;
+        return (
+          <div className="text-[11px] mt-1 flex flex-wrap gap-x-2" style={{ color: COLORS.textMuted }}>
+            <span>Tiempo total <strong style={{ color: COLORS.lane }}>{duracionTexto(reloj.segTotal)}</strong></span>
+            <span>· en movimiento <strong style={{ color: COLORS.lane }}>{duracionTexto(reloj.segMovimiento)}</strong></span>
+            <span style={{ color: paro ? COLORS.moderate : COLORS.textMuted }}>
+              · {detenido < 5 ? "sin paradas" : `detenido ${duracionTexto(detenido)}`}
+            </span>
+          </div>
+        );
+      })()}
 
       {difKm != null && Math.abs(difKm) >= 0.5 && (
         <div className="text-[11px] mt-1" style={{ color: COLORS.textMuted }}>
@@ -3108,6 +3132,34 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
   // está guardado, esto solo lo empuja al reloj. Si falla, se dice por qué y no se toca nada.
   const [enviandoReloj, setEnviandoReloj] = useState(false);
   const [envioReloj, setEnvioReloj] = useState(null);
+  // Alertas de ritmo en el reloj: el interruptor general (para todos los alumnos).
+  const [alertasGeneral, setAlertasGeneral] = useState(null);
+  const [avisoAlertas, setAvisoAlertas] = useState(null);
+  useEffect(() => { intervalsOp("alertasGeneral").then((r) => { if (r?.ok) setAlertasGeneral(!!r.alertasRitmo); }); }, []);
+  const cambiarAlertasGeneral = async () => {
+    const activar = !alertasGeneral;
+    setAvisoAlertas("Guardando y actualizando los relojes…");
+    const r = await intervalsOp("alertasGeneral", undefined, { activar });
+    if (r?.ok) {
+      setAlertasGeneral(activar);
+      const n = r.reenvio?.alumnos ?? 0;
+      setAvisoAlertas(activar
+        ? `Alertas activadas. Se actualizó el reloj de ${n} alumno${n === 1 ? "" : "s"} conectado${n === 1 ? "" : "s"}.`
+        : `Alertas desactivadas. Se actualizó el reloj de ${n} alumno${n === 1 ? "" : "s"} conectado${n === 1 ? "" : "s"}.`);
+    } else {
+      setAvisoAlertas("No se pudo cambiar. Prueba de nuevo.");
+    }
+    setTimeout(() => setAvisoAlertas(null), 6000);
+  };
+  // Para un alumno puntual: "general" (sigue el interruptor general), "on" u "off".
+  const cambiarAlertasAlumno = async (modo) => {
+    if (!student) return;
+    const updated = { ...student, alertasRitmo: { ...(student.alertasRitmo || {}), coach: modo } };
+    setBusy(true);
+    const ok = await safeSet(`student:${student.id}`, updated);
+    if (ok) setStudent(updated);
+    setBusy(false);
+  };
   const enviarSemanaAlReloj = async (weekNum) => {
     if (!student) return;
     setEnviandoReloj(true);
@@ -3989,6 +4041,24 @@ const resetPlan = async () => {
                     {enviandoReloj ? "Enviando…" : "Enviar al reloj"}
                   </button>
                 )}
+                {(student.intervals?.conectado || student.intervals?.token || student.intervals?.pruebaConClaveDelCoach) && (
+                  <div className="w-full rounded-lg px-3 py-2 text-xs flex flex-wrap items-center gap-2" style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, color: COLORS.textMuted }}>
+                    <Watch size={13} style={{ color: COLORS.lane }} />
+                    <span style={{ color: COLORS.lane }}>Alertas de ritmo (±5 s, calidad y fondos):</span>
+                    <select value={student.alertasRitmo?.coach || "general"} onChange={(e) => cambiarAlertasAlumno(e.target.value)} disabled={busy}
+                      className="px-2 py-1 rounded" style={{ background: COLORS.bg, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
+                      <option value="general">Como el general ({alertasGeneral ? "activadas" : "desactivadas"})</option>
+                      <option value="on">Activadas para este alumno</option>
+                      <option value="off">Desactivadas para este alumno</option>
+                    </select>
+                    {student.alertasRitmo?.alumno === false && ((student.alertasRitmo?.coach || "general") === "on" || ((student.alertasRitmo?.coach || "general") === "general" && alertasGeneral)) && (
+                      <span>· El alumno las apagó en su app.</span>
+                    )}
+                    {student.intervals?.umbral?.motivo === "sin-permiso" && (
+                      <span style={{ color: COLORS.moderate }}>· Para que funcionen, el alumno debe volver a conectar su reloj (permiso nuevo).</span>
+                    )}
+                  </div>
+                )}
                 {envioReloj && (
                   <span className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg"
                     style={{
@@ -4286,6 +4356,14 @@ const resetPlan = async () => {
                 style={{ background: statusFilter === "paused" ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.track}55` }}>
                 ⏸ {pausedCount} pausados
               </button>
+              {alertasGeneral != null && (
+                <button onClick={cambiarAlertasGeneral} title="Alertas de ritmo (±5 s) en el reloj, solo en calidad y fondos. Puedes cambiarlo para un alumno puntual desde su ficha."
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold"
+                  style={{ background: alertasGeneral ? COLORS.easy + "33" : COLORS.surface2, color: COLORS.lane, border: `1px solid ${alertasGeneral ? COLORS.easy : COLORS.border}` }}>
+                  <Watch size={12} /> Alertas de ritmo: {alertasGeneral ? "activadas" : "desactivadas"}
+                </button>
+              )}
+              {avisoAlertas && <span className="w-full text-xs px-1" style={{ color: COLORS.textMuted }}>{avisoAlertas}</span>}
               <select value={goalFilter} onChange={(e) => setGoalFilter(e.target.value)}
                 className="px-3 py-1.5 rounded-full text-xs font-semibold" style={{ background: goalFilter ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.track}55` }}>
                 <option value="">Todos los objetivos</option>
@@ -4377,7 +4455,7 @@ const resetPlan = async () => {
 /* Conectar el reloj del alumno con intervals.icu.
    Es opcional y reversible: sin esto la app funciona igual. Se dice de forma explícita qué
    se va a hacer con el permiso, porque el alumno está autorizando acceso a su cuenta. */
-function ConexionReloj({ student, onCambio, onLectura }) {
+function ConexionReloj({ student, onCambio, onLectura, onAlertas }) {
   const [estado, setEstado] = useState(null);
   const [ocupado, setOcupado] = useState(false);
   const [confirmarCorte, setConfirmarCorte] = useState(false);
@@ -4484,6 +4562,26 @@ function ConexionReloj({ student, onCambio, onLectura }) {
                 : ` El último envío no salió (${estado.ultimoEnvio.motivo}) — avísale a tu coach si no te aparecen.`
             )}
           </p>
+          {estado.alertas?.habilitadas && (
+            <div className="rounded-lg p-3 mb-3" style={{ background: COLORS.bg, border: `1px solid ${COLORS.border}` }}>
+              <label className="flex items-center justify-between gap-3 cursor-pointer">
+                <span>
+                  <span className="block text-sm font-semibold" style={{ color: COLORS.textPrimary }}>Alertas de ritmo</span>
+                  <span className="block text-xs mt-0.5" style={{ color: COLORS.textMuted }}>
+                    Tu reloj te avisa si vas 5 segundos más rápido o más lento que el ritmo, solo en las sesiones de calidad y en los fondos.
+                  </span>
+                </span>
+                <input type="checkbox" className="w-5 h-5 shrink-0" checked={!!estado.alertas.activas} disabled={ocupado}
+                  onChange={async (e) => { setOcupado(true); await onAlertas?.(e.target.checked); await cargar(); setOcupado(false); }} />
+              </label>
+              {estado.alertas.activas && estado.alertas.reconectar && (
+                <p className="text-xs mt-2" style={{ color: COLORS.moderate }}>
+                  Para que las alertas te lleguen, vuelve a conectar tu reloj una vez: hace falta un permiso nuevo.{" "}
+                  <button type="button" onClick={conectar} className="underline font-semibold" style={{ color: COLORS.track }}>Volver a conectar</button>
+                </p>
+              )}
+            </div>
+          )}
           <div className="flex flex-wrap items-center gap-2 mb-2">
             <button type="button" onClick={actualizarDesdeElReloj} disabled={trayendo}
               className="flex items-center gap-1 text-xs px-2 py-1 rounded"
@@ -4516,8 +4614,8 @@ function ConexionReloj({ student, onCambio, onLectura }) {
             aparecen solos en el reloj, con sus ritmos. Es opcional y lo puedes cortar cuando quieras.
           </p>
           <p className="text-xs mb-3" style={{ color: COLORS.textMuted }}>
-            Se piden dos permisos: escribir los entrenamientos en tu calendario y leer las
-            actividades que completas. Nada más.
+            Se piden tres permisos: escribir los entrenamientos en tu calendario, leer las
+            actividades que completas y poner tu ritmo umbral (para las alertas de ritmo). Nada más.
           </p>
           <button onClick={conectar} disabled={ocupado} className="px-4 py-2 rounded-lg text-sm font-semibold"
             style={{ background: COLORS.track, color: COLORS.lane }}>
@@ -4895,6 +4993,15 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
     setSaved(false);
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => { persistNow(); }, immediate ? 0 : 900);
+  };
+  // Alertas de ritmo: el alumno solo puede prenderlas o apagarlas si el coach las habilitó
+  // (el servidor solo acepta este dato del alumno). Se guarda al instante.
+  const cambiarMisAlertas = async (activar) => {
+    if (!student) return;
+    const updated = { ...(pendingStudentRef.current || student), alertasRitmo: { ...(student.alertasRitmo || {}), alumno: activar } };
+    setStudent(updated);
+    pendingStudentRef.current = updated;
+    await persistNow();
   };
   // Si el alumno cierra o cambia de pantalla con algo sin guardar, se intenta guardar antes.
   useEffect(() => () => { if (pendingStudentRef.current) persistNow(); }, [persistNow]);
@@ -5331,7 +5438,7 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
           </div>
           <div>
             <div className="text-[10px] uppercase tracking-widest mb-2" style={{ color: COLORS.textMuted }}>Tu reloj</div>
-            <ConexionReloj student={student} onCambio={reloadStudent} onLectura={aplicarLectura} />
+            <ConexionReloj student={student} onCambio={reloadStudent} onLectura={aplicarLectura} onAlertas={cambiarMisAlertas} />
           </div>
           {week && (
             <button onClick={() => exportWeekToPDF(student, week, activeWeekNum)}
