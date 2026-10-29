@@ -20,7 +20,9 @@ function isPureReorder(basePlan, incomingPlan) {
   if (!Array.isArray(basePlan) || !Array.isArray(incomingPlan)) return false;
   if (basePlan.length !== incomingPlan.length) return false;
   const fingerprint = (d) => {
-    const { day, movedFrom, ...rest } = d || {};
+    // calentamientoLibre: el alumno puede prender o apagar el calentamiento y enfriamiento
+    // libres (con LAP) de cada sesión. Es lo único del contenido que puede cambiar.
+    const { day, movedFrom, calentamientoLibre, ...rest } = d || {};
     return JSON.stringify(rest);
   };
   const a = basePlan.map(fingerprint).sort();

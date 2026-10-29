@@ -89,6 +89,7 @@ import {
   conProgresiones,
   proyectarSemana,
   fijarSemana,
+  admiteCalentamientoLibre,
   marcarCalentamientoCorto,
   getSessionDetail,
   getStageTable,
@@ -1522,7 +1523,16 @@ function SalidasAdicionales({ extras, esCoach }) {
   );
 }
 
-function LapCard({ day: dayRaw, index, mode, log, onChangeDay, onChangeLog, isToday, isRaceGoal, onStartLive, onSwapDay, onMoveSession, esCoach, extras }) {
+const relojConectado = (s) => !!(s?.intervals?.conectado || s?.intervals?.token || s?.intervals?.pruebaConClaveDelCoach);
+// El interruptor de calentamiento y enfriamiento libres de una sesión, si corresponde mostrarlo.
+function lapLibrePara(student, day, onToggle) {
+  if (!student?.calentamientoLibrePermitido || !relojConectado(student) || !admiteCalentamientoLibre(day)) return undefined;
+  return { activo: !!day.calentamientoLibre, onToggle };
+}
+
+// lapLibre: { activo, onToggle } cuando esta sesión puede llevar calentamiento y
+// enfriamiento libres en el reloj (el coach se lo permitió al alumno y es de calidad).
+function LapCard({ day: dayRaw, index, mode, log, onChangeDay, onChangeLog, isToday, isRaceGoal, onStartLive, onSwapDay, onMoveSession, esCoach, extras, lapLibre }) {
   // Un día puede faltar en planes guardados por versiones anteriores; se trata como descanso
   // en vez de tumbar la pantalla completa del alumno.
   const day = dayRaw || { day: DAYS[index] ?? "", type: "Descanso", paceKey: "", km: 0 };
@@ -1572,6 +1582,20 @@ function LapCard({ day: dayRaw, index, mode, log, onChangeDay, onChangeLog, isTo
               style={{ background: COLORS.bg, color: COLORS.textPrimary, border: `1px solid ${COLORS.border}`, fontFamily: "'Oswald', sans-serif" }} />
           ) : (
             <div className="mt-0.5 text-base font-semibold truncate" style={{ fontFamily: "'Oswald', sans-serif", color: COLORS.textPrimary }}>{day.type}</div>
+          )}
+
+          {lapLibre && (
+            <label className="mt-2 flex items-center justify-between gap-3 rounded-lg px-2.5 py-2 cursor-pointer"
+              style={{ background: COLORS.bg, border: `1px solid ${lapLibre.activo ? COLORS.track + "88" : COLORS.border}` }}>
+              <span className="min-w-0">
+                <span className="block text-xs font-semibold" style={{ color: COLORS.lane }}>Calentamiento y enfriamiento libres</span>
+                <span className="block text-[11px]" style={{ color: COLORS.textMuted }}>
+                  {lapLibre.activo ? "En el reloj avanzan cuando presionas LAP" : "En el reloj terminan solos al cumplir la distancia"}
+                </span>
+              </span>
+              <input type="checkbox" className="w-5 h-5 shrink-0" checked={!!lapLibre.activo}
+                onChange={() => lapLibre.onToggle()} style={{ accentColor: COLORS.track }} />
+            </label>
           )}
 
           {mode === "edit" ? (
@@ -2683,7 +2707,8 @@ function SemanaDelPanorama({ student, weekNum, onFijar, busy }) {
         </span>
       </div>
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
-        {semana.plan.map((d, i) => <LapCard key={i} day={d} index={i} mode="edit" esCoach onChangeDay={cambiarDia} onSwapDay={intercambiar} />)}
+        {semana.plan.map((d, i) => <LapCard key={i} day={d} index={i} mode="edit" esCoach onChangeDay={cambiarDia} onSwapDay={intercambiar}
+          lapLibre={lapLibrePara(student, d, () => cambiarDia(i, { ...d, calentamientoLibre: !d.calentamientoLibre }))} />)}
       </div>
       <div className="flex flex-wrap gap-2 mt-3">
         {(cambiada || !semana.fijada) && (
@@ -3489,6 +3514,17 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
     setBusy(true);
     const ok = await safeSet(`student:${student.id}`, updated);
     if (ok) { setStudent(updated); loadRosterProgress(); }
+    setBusy(false);
+  };
+  // Permitirle (o no) al alumno el calentamiento y enfriamiento libres con LAP. Las sesiones
+  // que ya lo tengan prendido cambian en su reloj al guardar.
+  const cambiarLapPermitido = async (permitir) => {
+    if (!student) return;
+    const updated = { ...student, calentamientoLibrePermitido: permitir };
+    if (!permitir) delete updated.calentamientoLibrePermitido;
+    setBusy(true);
+    const ok = await safeSet(`student:${student.id}`, updated);
+    if (ok) setStudent(updated);
     setBusy(false);
   };
   const enviarSemanaAlReloj = async (weekNum) => {
@@ -4369,7 +4405,8 @@ const resetPlan = async () => {
                 );
               })()}
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
-                {week.plan.map((d, i) => <LapCard key={i} day={d} index={i} mode={isViewingLive ? "edit" : "view"} log={week.log[i]} esCoach extras={extrasDelDia(week, i, student, activeWeekNum)} onChangeDay={updateDay} onSwapDay={isViewingLive ? swapDays : undefined} />)}
+                {week.plan.map((d, i) => <LapCard key={i} day={d} index={i} mode={isViewingLive ? "edit" : "view"} log={week.log[i]} esCoach extras={extrasDelDia(week, i, student, activeWeekNum)} onChangeDay={updateDay} onSwapDay={isViewingLive ? swapDays : undefined}
+                  lapLibre={isViewingLive ? lapLibrePara(student, d, () => updateDay(i, { ...d, calentamientoLibre: !d.calentamientoLibre })) : undefined} />)}
               </div>
               <div className="flex flex-wrap gap-2">
                 {isViewingLive && (
@@ -4412,6 +4449,22 @@ const resetPlan = async () => {
                     {student.intervals?.umbral?.motivo === "sin-permiso" && (
                       <span className="block mt-1" style={{ color: COLORS.moderate }}>Para que funcionen, el alumno debe volver a conectar su reloj (permiso nuevo).</span>
                     )}
+                  </div>
+                )}
+                {relojConectado(student) && (
+                  <div className="w-full rounded-lg px-3 py-2.5 text-xs" style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, color: COLORS.textMuted }}>
+                    <label className="flex items-center justify-between gap-3 cursor-pointer">
+                      <span className="flex items-center gap-2">
+                        <Flag size={14} style={{ color: student.calentamientoLibrePermitido ? COLORS.easy : COLORS.textMuted }} />
+                        <span>
+                          <span className="block text-sm font-semibold" style={{ color: COLORS.lane }}>Calentamiento y enfriamiento libres</span>
+                          <span className="block">Con LAP en el reloj. Se prenden sesión por sesión (calidad), tú o el alumno</span>
+                        </span>
+                      </span>
+                      <input type="checkbox" className="w-5 h-5 shrink-0" disabled={busy}
+                        checked={!!student.calentamientoLibrePermitido}
+                        onChange={(e) => cambiarLapPermitido(e.target.checked)} />
+                    </label>
                   </div>
                 )}
                 {envioReloj && (
@@ -5359,6 +5412,22 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
     pendingStudentRef.current = updated;
     await persistNow();
   };
+  // Calentamiento y enfriamiento libres de UNA sesión (con LAP en el reloj). Solo si el
+  // coach se lo permitió; el servidor acepta del alumno este dato del plan y nada más.
+  // Se guarda al instante y el reloj se actualiza solo.
+  const cambiarLapLibre = (wkNum, index) => {
+    setStudent((s) => {
+      const week = s?.weeks?.[wkNum];
+      if (!week) return s;
+      const plan = week.plan.map((d, i) => (i === index ? { ...d, calentamientoLibre: !d.calentamientoLibre } : d));
+      const updated = { ...s, weeks: { ...s.weeks, [wkNum]: { ...week, plan } } };
+      pendingStudentRef.current = updated;
+      return updated;
+    });
+    setSaved(false);
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => { persistNow(); }, 0);
+  };
   // Si el alumno cierra o cambia de pantalla con algo sin guardar, se intenta guardar antes.
   useEffect(() => () => { if (pendingStudentRef.current) persistNow(); }, [persistNow]);
   // El alumno puede mover una sesión a un día contiguo (el anterior o el siguiente), siempre
@@ -5553,7 +5622,9 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
                   extras={extrasDelDia(currentWeekData, todayDowIndex, student, activeLogWeek)}
                   onChangeLog={puedeRegistrarHoy ? changeLog : undefined} isToday={puedeRegistrarHoy}
                   isRaceGoal={!isFitnessGoal(student.goal)}
-                  onStartLive={puedeRegistrarHoy ? (idx) => setLiveTrainingDayIdx(idx) : undefined} />
+                  onStartLive={puedeRegistrarHoy ? (idx) => setLiveTrainingDayIdx(idx) : undefined}
+                  lapLibre={puedeRegistrarHoy && !currentWeekData.log[todayDowIndex]?.completed
+                    ? lapLibrePara(student, currentWeekData.plan[todayDowIndex], () => cambiarLapLibre(activeLogWeek, todayDowIndex)) : undefined} />
               ) : (
                 <div className="rounded-2xl p-4 text-sm" style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, color: COLORS.textMuted }}>
                   Hoy toca descanso. Recupera bien para la próxima sesión.
@@ -5711,7 +5782,8 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
           )}
 
           <div className="grid sm:grid-cols-2 gap-3 mb-4">
-            {week.plan.map((d, i) => <LapCard key={i} day={d} index={i} mode={canEditWeek && !waitingForCoach ? "log" : "view"} log={week.log[i]} extras={extrasDelDia(week, i, student, activeWeekNum)} onChangeLog={canEditWeek ? changeLog : undefined} isToday={canEditWeek && i === todayDowIndex} isRaceGoal={!isFitnessGoal(student.goal)} onStartLive={canEditWeek && !waitingForCoach ? (idx) => setLiveTrainingDayIdx(idx) : undefined} onMoveSession={canMoveSessions ? moveHelper : undefined} />)}
+            {week.plan.map((d, i) => <LapCard key={i} day={d} index={i} mode={canEditWeek && !waitingForCoach ? "log" : "view"} log={week.log[i]} extras={extrasDelDia(week, i, student, activeWeekNum)} onChangeLog={canEditWeek ? changeLog : undefined} isToday={canEditWeek && i === todayDowIndex} isRaceGoal={!isFitnessGoal(student.goal)} onStartLive={canEditWeek && !waitingForCoach ? (idx) => setLiveTrainingDayIdx(idx) : undefined} onMoveSession={canMoveSessions ? moveHelper : undefined}
+              lapLibre={!isClosedWeek && !week.log[i]?.completed ? lapLibrePara(student, d, () => cambiarLapLibre(activeWeekNum, i)) : undefined} />)}
           </div>
 
 

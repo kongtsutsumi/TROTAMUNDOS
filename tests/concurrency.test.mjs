@@ -17,7 +17,7 @@ function check(name, cond, detail) {
 function isPureReorder(basePlan, incomingPlan) {
   if (!Array.isArray(basePlan) || !Array.isArray(incomingPlan)) return false;
   if (basePlan.length !== incomingPlan.length) return false;
-  const fp = (d) => { const { day, movedFrom, ...rest } = d || {}; return JSON.stringify(rest); };
+  const fp = (d) => { const { day, movedFrom, calentamientoLibre, ...rest } = d || {}; return JSON.stringify(rest); };
   const a = basePlan.map(fp).sort(), b = incomingPlan.map(fp).sort();
   return a.every((x, i) => x === b[i]);
 }
@@ -704,6 +704,48 @@ console.log("\n▸ La conexión con el reloj no la puede pisar el navegador del 
   const copiaConToken = { ...copiaVieja, intervals: { token: "viejo-revocado" } };
   const tras2 = mergeAsCoach(desconectado, copiaConToken);
   check("Una copia vieja no resucita una conexión cortada", tras2.intervals === undefined, JSON.stringify(tras2.intervals));
+}
+
+console.log("\n▸ Calentamiento y enfriamiento libres (LAP en el reloj)");
+{
+  const IC = await import("../lib/intervals-icu.mjs");
+  const PE = await import("../lib/plan-engine.mjs");
+  const series = { day: "Mar", slot: "q1", paceKey: "R", km: 9, type: "Series", distOverride: 0.4, repsOverride: 8 };
+  const suave = { day: "Mié", slot: "e1", paceKey: "E", km: 8, type: "Easy" };
+  const fondo = { day: "Dom", slot: "long", paceKey: "long", km: 18, type: "Fondo" };
+  check("Series: admite calentamiento libre", PE.admiteCalentamientoLibre(series));
+  check("Rodaje suave: no", !PE.admiteCalentamientoLibre(suave));
+  check("Fondo: no", !PE.admiteCalentamientoLibre(fondo));
+  for (const pk of ["I", "T", "brokenT", "fartlek", "hills"]) {
+    check(`${pk}: admite`, PE.admiteCalentamientoLibre({ ...series, paceKey: pk, distOverride: undefined, repsOverride: undefined }));
+  }
+  const conLap = IC.sesionATexto(series, 6.5, { libre: true });
+  const sinLap = IC.sesionATexto(series, 6.5, {});
+  const lineas = conLap.split("\n").filter((l) => /Press lap/.test(l));
+  check("Con LAP: solo calentamiento y enfriamiento", lineas.length === 2 && /Warm-up/.test(lineas[0]) && /Cool-down/.test(lineas[1]), conLap);
+  check("Con LAP: conservan la distancia de referencia", lineas.every((l) => /\d(\.\d)?km/.test(l)), lineas.join(" / "));
+  check("Sin LAP: nada cambia", !/Press lap/.test(sinLap));
+  check("Las series no llevan LAP", conLap.replace(/^- Press lap.*$/gm, "") === sinLap.replace(/^- (Warm-up|Cool-down).*$/gm, "") || !/Press lap.*Rápido|Press lap.*Serie/.test(conLap));
+
+  const alumno = (permitido, flag) => ({
+    id: "ana", planStartMonday: "2026-11-02", paces: { E: 6.5 }, ...(permitido ? { calentamientoLibrePermitido: true } : {}),
+    weeks: { 1: { plan: [{ day: "Lun", paceKey: "" }, { ...series, calentamientoLibre: flag }, suave], log: [{}, {}, {}] } },
+  });
+  const texto = (st) => JSON.stringify(IC.semanaAEventos(st, 1, {}));
+  check("Permitido y prendido: va con LAP", /Press lap/.test(texto(alumno(true, true))));
+  check("Sin permiso del coach: no", !/Press lap/.test(texto(alumno(false, true))));
+  check("Permitido pero apagado en la sesión: no", !/Press lap/.test(texto(alumno(true, false))));
+  check("Prenderlo provoca el reenvío al reloj", IC.semanasParaReenviar(alumno(true, false), alumno(true, true), "2026-11-01").includes(1));
+  check("Quitar el permiso también", IC.semanasParaReenviar(alumno(true, true), alumno(false, true), "2026-11-01").includes(1));
+
+  // El alumno puede cambiar solo esa llave del plan.
+  const guardado = { id: "ana", weeks: { 1: { plan: [series, suave], log: [{}, {}] } } };
+  const prende = mergeAsStudent(guardado, { weeks: { 1: { plan: [{ ...series, calentamientoLibre: true }, suave], log: [{}, {}] } } });
+  check("Alumno: puede prender el calentamiento libre", prende.weeks[1].plan[0].calentamientoLibre === true);
+  const tramposo = mergeAsStudent(guardado, { weeks: { 1: { plan: [{ ...series, calentamientoLibre: true, km: 3 }, suave], log: [{}, {}] } } });
+  check("Alumno: no puede colar otro cambio con él", tramposo.weeks[1].plan[0].km === 9 && !tramposo.weeks[1].plan[0].calentamientoLibre);
+  const permiso = mergeAsStudent({ ...guardado, calentamientoLibrePermitido: undefined }, { ...guardado, calentamientoLibrePermitido: true });
+  check("Alumno: no puede darse el permiso", !permiso.calentamientoLibrePermitido);
 }
 
 console.log("\n" + "─".repeat(52));
