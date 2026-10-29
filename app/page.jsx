@@ -85,6 +85,7 @@ import {
   getRPace,
   getRepresentativePace,
   getSessionBars,
+  conStrides,
   getSessionDetail,
   getStageTable,
   getTPaceForDuration,
@@ -150,7 +151,7 @@ function SessionBarChart({ day }) {
   const gap = bars.length > 40 ? 0.3 : 1;
   const rects = bars.map((b, i) => {
     const wRaw = (Math.max(0.2, b.durationMin) / totalMin) * W;
-    const w = Math.max(1.2, wRaw - gap);
+    const w = Math.max(b.colorKind === "hard" ? 5 : 1.2, wRaw - gap);
     const h = heightFrac(b.pace) * maxH;
     const fill = COLOR_KIND_FILL[b.colorKind] ?? COLORS.easy;
     const rect = <rect key={i} x={x} y={baseY - h} width={w} height={h} rx={1.5} fill={fill} opacity={0.9} />;
@@ -276,7 +277,7 @@ function buildSessionBarSVG(day) {
   const gap = bars.length > 40 ? 0.3 : 1;
   const rects = bars.map((b) => {
     const wRaw = (Math.max(0.2, b.durationMin) / totalMin) * W;
-    const w = Math.max(1.2, wRaw - gap);
+    const w = Math.max(b.colorKind === "hard" ? 5 : 1.2, wRaw - gap);
     const h = heightFrac(b.pace) * maxH;
     const fill = COLOR_KIND_HEX[b.colorKind] || "#4C9A6A";
     const rect = `<rect x="${x}" y="${baseY - h}" width="${w}" height="${h}" rx="1.5" fill="${fill}" opacity="0.9"></rect>`;
@@ -1612,6 +1613,18 @@ function LapCard({ day: dayRaw, index, mode, log, onChangeDay, onChangeLog, isTo
                       onChangeDay(index, { ...day, runWalk, type });
                     }} style={{ accentColor: COLORS.track }} />
                   Estructurar como Run/Walk
+                </label>
+              )}
+              {day.paceKey === "E" && !day.stageLabel && !day.isSpeedDay && (
+                <label className="col-span-2 flex items-center gap-2 text-xs cursor-pointer" style={{ color: COLORS.textMuted }}>
+                  <input type="checkbox" checked={conStrides(day)} onChange={(e) => {
+                      const strides = e.target.checked;
+                      // El título por defecto acompaña: "Easy" ↔ "Easy + strides".
+                      const type = !day.runWalk && day.type === "Easy + strides" && !strides ? "Easy"
+                        : !day.runWalk && day.type === "Easy" && strides ? "Easy + strides" : day.type;
+                      onChangeDay(index, { ...day, strides, type });
+                    }} style={{ accentColor: COLORS.track }} />
+                  Strides al final ({day.runWalk ? 3 : 4} × 20")
                 </label>
               )}
               {(day.paceKey === "R" || day.paceKey === "I" || day.paceKey === "T") && (

@@ -92,6 +92,45 @@ for (const [goal, level, ritmo, fecha, pico] of casos) {
 }
 console.log(`  ${casos.length} ciclos, ${semanasRevisadas} semanas revisadas`);
 
+section("Velocidad en la base: quién la lleva");
+{
+  const martes = (goal, level, ritmo, fecha) => {
+    const { semanas } = simular(crear(goal, level, ritmo, fecha, null));
+    return semanas.filter((w) => w.phase === "base").map((w) => w.plan.find((d) => d.slot === "q1"));
+  };
+  const m4 = martes("42k", "intermedio1", "5:30", "2027-05-16");
+  check(m4.length > 4 && m4.every((d) => d.paceKey === "E"), "42K de 4 días: una sola calidad (martes suave)");
+  check(m4[0].type === "Easy + strides" && E.conStrides(m4[0]), "…con strides");
+  const m10 = martes("10k", "avanzado1", "4:00", "2027-06-13");
+  check(m10.length > 4 && m10.every((d) => d.paceKey === "E"), "10K: la base no cambia");
+  const m21 = martes("21k", "intermedio2", "4:30", "2027-06-20");
+  check(m21.length > 4 && m21.every((d) => d.paceKey === "R"), "21K de 5 días: velocidad corta");
+}
+
+section("Strides y progresiones: gráfico, modo en vivo y reloj");
+{
+  const IC = await import(new URL("../lib/intervals-icu.mjs", import.meta.url).href);
+  const easy = { paceKey: "E", type: "Easy + strides", km: 7, easyPace: 6, extra: "strides", slot: "q1" };
+  check(E.conStrides(easy), "Easy + strides lleva strides");
+  check(!E.conStrides({ ...easy, strides: false }), "el coach los puede apagar");
+  check(E.conStrides({ paceKey: "E", km: 7, easyPace: 6, strides: true }), "…y prender en cualquier suave");
+  check(E.conStrides({ paceKey: "E", km: 7, easyPace: 6, runWalk: true }) && !E.conStrides({ paceKey: "E", km: 7, easyPace: 6, runWalk: true, strides: false }), "run/walk: strides por defecto, apagables");
+  check(!E.conStrides({ paceKey: "E", stageLabel: "x", runWalk: true, stageRun: 2, stageWalk: 1, stageReps: 8 }), "principiantes por etapas: sin strides");
+  const bars = E.getSessionBars(easy);
+  check(bars.filter((b) => b.label === "Stride").length === 4, "gráfico: 4 barritas de strides al final");
+  check(E.getSessionBars({ ...easy, strides: false }).length === 1, "sin strides: una sola barra");
+  const segs = E.buildLiveSegments(easy, 6);
+  check(segs.filter((x) => /^Stride/.test(x.label)).length === 4, "modo en vivo: 4 strides");
+  const t = IC.sesionATexto(easy, 6);
+  check(/^4x$/m.test(t) && /Stride 20s/.test(t) && /Caminata 1m/.test(t), "reloj: 4x stride 20s + caminata 1m");
+  const prog = { paceKey: "E", type: "Easy + progresiones", km: 7, easyPace: 6, extra: "progresiones", slot: "q2" };
+  check(E.getSessionBars(prog).filter((b) => b.label === "Progresión").length === 4, "gráfico: 4 progresiones");
+  const tp = IC.sesionATexto(prog, 6);
+  check(/^4x$/m.test(tp) && /Progresión 100mtr/.test(tp), "reloj: 4x progresión 100 m");
+  const rw = { paceKey: "E", type: "Run/Walk", km: 6, easyPace: 6, runWalk: true };
+  check(/Stride 20s/.test(IC.sesionATexto(rw, 6)) && !/Stride/.test(IC.sesionATexto({ ...rw, strides: false }, 6)), "run/walk: strides en el reloj solo si están activos");
+}
+
 section("Base progresiva");
 {
   const s0 = crear("42k", "avanzado1", "4:45", "2027-08-29", 90);
@@ -110,7 +149,14 @@ section("Base progresiva");
   const q2 = (w) => w.plan.find((d) => d.slot === "q2");
   check(q2(base[0]).paceKey === "E" && q2(base[1]).paceKey === "E", "semanas 1-2 sin umbral");
   check(base.slice(2).some((w) => q2(w).paceKey === "brokenT"), "desde la semana 3, umbral suave");
-  check(base[0].plan.find((d) => d.slot === "q1").extra === "strides", "strides en la semana 1");
+  // Martes de la base (21K/42K, 5+ días): velocidad corta desde la semana 1.
+  const q1 = (w) => w.plan.find((d) => d.slot === "q1");
+  check(q1(base[0]).paceKey === "R" && q1(base[0]).type === "Velocidad corta" && q1(base[0]).distOverride === 0.2, "semana 1: velocidad corta de 200 m");
+  check(base.every((w) => q1(w).paceKey === "R"), "toda la base lleva velocidad el martes (también descargas)");
+  const transicion = base.slice(-4);
+  check(transicion.every((w) => [0.3, 0.4].includes(q1(w).distOverride)), "últimas 4 semanas de base: 300-400 m");
+  check(base.slice(0, -4).every((w) => q1(w).distOverride === 0.2), "antes de la transición: 200 m");
+  check(transicion.filter((w) => !w.plan.some((d) => d.type === "Easy + progresiones")).every((w) => q2(w).paceKey === "brokenT"), "en la transición el jueves es umbral (salvo descarga)");
 }
 {
   const conDato = simular(crear("42k", "intermedio1", "6:00", "2027-05-16", 50, { currentWeeklyKm: 35, currentLongKm: 16 })).semanas;
