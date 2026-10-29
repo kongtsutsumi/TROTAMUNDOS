@@ -86,6 +86,9 @@ import {
   getRepresentativePace,
   getSessionBars,
   conStrides,
+  conProgresiones,
+  proyectarSemana,
+  fijarSemana,
   marcarCalentamientoCorto,
   getSessionDetail,
   getStageTable,
@@ -1616,7 +1619,7 @@ function LapCard({ day: dayRaw, index, mode, log, onChangeDay, onChangeLog, isTo
                   Estructurar como Run/Walk
                 </label>
               )}
-              {day.paceKey === "E" && !day.stageLabel && !day.isSpeedDay && (
+              {day.paceKey === "E" && !day.stageLabel && !day.isSpeedDay && !conProgresiones(day) && (
                 <label className="col-span-2 flex items-center gap-2 text-xs cursor-pointer" style={{ color: COLORS.textMuted }}>
                   <input type="checkbox" checked={conStrides(day)} onChange={(e) => {
                       const strides = e.target.checked;
@@ -2514,6 +2517,12 @@ function ProposalPanel({ proposal, values, setValues, onConfirm, onCancel, busy,
       <div className="text-sm font-semibold mb-1" style={{ color: COLORS.textPrimary, fontFamily: "'Oswald', sans-serif" }}>PROPUESTA DE LA PRÓXIMA SEMANA</div>
       {weekDateRange && <div className="text-xs mb-2" style={{ color: COLORS.track, fontFamily: "'JetBrains Mono', monospace" }}>{weekDateRange}</div>}
       <p className="text-xs mb-3" style={{ color: COLORS.textMuted }}>{proposal.note}</p>
+      {proposal.semanaFijada && (
+        <div className="flex items-start gap-2 rounded-lg p-2.5 mb-3 text-xs" style={{ background: COLORS.track + "18", border: `1px solid ${COLORS.track}55`, color: COLORS.textPrimary }}>
+          <Pin size={13} style={{ color: COLORS.track, marginTop: 1, flexShrink: 0 }} />
+          <span>Esta semana la fijaste en el panorama: se publicará tal cual la dejaste y los valores de abajo no se usan. Revisa si todavía le corresponde según cómo le fue al alumno; puedes cambiarla en el panorama antes de confirmar.</span>
+        </div>
+      )}
       <div className="grid sm:grid-cols-2 gap-3">
         <div>
           <label className="block text-[10px] uppercase tracking-wide mb-1" style={{ color: COLORS.textMuted }}>Km totales de la semana</label>
@@ -2578,7 +2587,132 @@ function ProposalPanel({ proposal, values, setValues, onConfirm, onCancel, busy,
   );
 }
 
-function PanoramaPanel({ data, student, currentWeek, edits, longEdits, qualityEdits, onEdit, onEditLong, onEditQuality, onSave, busy }) {
+// Detalle de UNA semana dentro del panorama, al hacerle click.
+//  · Pasada: lo planificado y lo registrado, solo para ver.
+//  · Vigente: se ve aquí; se edita abajo, en el plan de la semana.
+//  · Futura: la proyección del motor (o la semana ya fijada), editable día por día. Al guardar
+//    queda FIJADA: el motor no la recalcula y al llegar se publica tal cual.
+function SemanaDelPanorama({ student, weekNum, onFijar, busy }) {
+  const cw = student.currentWeek;
+  const modo = weekNum < cw ? "pasada" : weekNum === cw ? "vigente" : "futura";
+  const base = useMemo(() => (modo === "futura" ? proyectarSemana(student, weekNum) : null), [student, weekNum, modo]);
+  const [borrador, setBorrador] = useState(null);
+  useEffect(() => { setBorrador(null); }, [base]);
+
+  if (modo !== "futura") {
+    const week = student.weeks?.[weekNum];
+    if (!week || !Array.isArray(week.plan)) {
+      return <p className="text-xs mt-2" style={{ color: COLORS.textMuted }}>Esta semana no tiene plan guardado.</p>;
+    }
+    const log = week.log || [];
+    return (
+      <div className="mt-2 pt-2" style={{ borderTop: `1px dashed ${COLORS.border}` }}>
+        <p className="text-[11px] mb-2" style={{ color: COLORS.textMuted }}>
+          {modo === "vigente"
+            ? "Es la semana vigente: para editarla usa el plan de la semana, más abajo."
+            : `Solo para ver: lo planificado y lo que registró el alumno${week.inactive ? " (semana sin actividad)" : week.paused ? " (semana pausada)" : ""}.`}
+        </p>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+          {week.plan.map((d, i) => <LapCard key={i} day={d} index={i} mode="view" log={log[i]} esCoach extras={extrasDelDia(week, i, student, weekNum)} />)}
+        </div>
+      </div>
+    );
+  }
+
+  if (!base) return <p className="text-xs mt-2" style={{ color: COLORS.textMuted }}>No se pudo proyectar esta semana.</p>;
+  const semana = borrador || base;
+  const cambiada = !!borrador;
+  const seReajusta = semana.weeklyKm > 0 && !["principiante", "fitness"].includes(semana.phase);
+  const cambiarDia = (index, newDay) => {
+    setBorrador((b) => {
+      const sem = b || base;
+      const anterior = sem.plan[index];
+      let dia = newDay;
+      if (newDay?.liberar) {
+        const { liberar, kmFijado, ...resto } = newDay;
+        dia = resto;
+      } else if (esDiaDeVolumen(anterior) && (Number(newDay.km) !== Number(anterior.km) || newDay.paceKey !== anterior.paceKey)) {
+        const { descansoPorVolumen, ...resto } = newDay;
+        dia = { ...resto, kmFijado: true };
+      }
+      let plan = sem.plan.map((d, i) => (i === index ? dia : d));
+      if (seReajusta) plan = repartirVolumen(plan, sem.weeklyKm).plan;
+      return { ...sem, plan };
+    });
+  };
+  const intercambiar = (a, b) => {
+    if (a === b) return;
+    setBorrador((prev) => {
+      const sem = prev || base;
+      const plan = [...sem.plan];
+      const la = plan[a].day, lb = plan[b].day;
+      const da = { ...plan[b], day: la }, db = { ...plan[a], day: lb };
+      plan[a] = da; plan[b] = db;
+      return { ...sem, plan };
+    });
+  };
+  const cambiarVolumen = (km) => {
+    if (!(km >= 0)) return;
+    setBorrador((prev) => {
+      const sem = prev || base;
+      const plan = km > 0 && seReajusta ? repartirVolumen(sem.plan, km).plan : sem.plan;
+      return { ...sem, weeklyKm: km, plan };
+    });
+  };
+  const suma = Math.round(semana.plan.reduce((t, d) => t + (Number(d?.km) || 0), 0) * 10) / 10;
+  const dif = semana.weeklyKm > 0 ? Math.round((suma - semana.weeklyKm) * 10) / 10 : 0;
+  const cuadra = Math.abs(dif) < 0.15;
+  return (
+    <div className="mt-2 pt-2" style={{ borderTop: `1px dashed ${COLORS.border}` }}>
+      <p className="text-[11px] mb-2" style={{ color: semana.fijada ? COLORS.track : COLORS.textMuted }}>
+        {semana.fijada
+          ? "Semana fijada por ti: el motor ya no la recalcula y al llegar se publica tal cual. Te avisaremos ese día para que la revises."
+          : "Propuesta del motor si el alumno cumple todo. Si la cambias y la guardas, queda fijada: se publicará tal cual, aunque el alumno rinda distinto."}
+      </p>
+      <div className="flex flex-wrap items-center gap-2 mb-2 text-xs" style={{ color: COLORS.textMuted }}>
+        <label className="flex items-center gap-1.5">
+          Km de la semana
+          <input type="number" min="0" step="0.5" value={semana.weeklyKm ?? ""}
+            onChange={(e) => cambiarVolumen(Number(e.target.value))}
+            className="w-20 rounded px-2 py-1 font-mono text-right"
+            style={{ background: COLORS.bg, color: COLORS.lane, border: `1px solid ${COLORS.border}` }} />
+        </label>
+        <span style={{ color: cuadra ? COLORS.textMuted : COLORS.moderate }}>
+          Suma: <b style={{ color: COLORS.lane }}>{suma} km</b>
+          {!cuadra && (dif > 0 ? ` · ${dif} km por encima` : ` · ${-dif} km por debajo`)}
+        </span>
+      </div>
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+        {semana.plan.map((d, i) => <LapCard key={i} day={d} index={i} mode="edit" esCoach onChangeDay={cambiarDia} onSwapDay={intercambiar} />)}
+      </div>
+      <div className="flex flex-wrap gap-2 mt-3">
+        {(cambiada || !semana.fijada) && (
+          <button onClick={() => onFijar(weekNum, semana)} disabled={busy}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold"
+            style={{ background: COLORS.track, color: COLORS.lane }}>
+            <Pin size={12} /> {semana.fijada ? "Guardar cambios (sigue fijada)" : "Guardar semana (queda fija)"}
+          </button>
+        )}
+        {cambiada && (
+          <button onClick={() => setBorrador(null)} disabled={busy} className="px-3 py-1.5 rounded text-xs" style={{ color: COLORS.textMuted, border: `1px solid ${COLORS.border}` }}>
+            Descartar cambios
+          </button>
+        )}
+        {semana.fijada && !cambiada && (
+          <button onClick={() => onFijar(weekNum, null)} disabled={busy}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs"
+            style={{ color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
+            <RotateCw size={12} /> Volver a la propuesta del motor
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PanoramaPanel({ data, student, currentWeek, edits, longEdits, qualityEdits, onEdit, onEditLong, onEditQuality, onSave, onFijar, busy }) {
+  const [abierta, setAbierta] = useState(null);
+  const [verPasadas, setVerPasadas] = useState(false);
   if (data.kind === "flat") {
     return (
       <p className="text-sm" style={{ color: COLORS.textMuted }}>
@@ -2609,26 +2743,65 @@ function PanoramaPanel({ data, student, currentWeek, edits, longEdits, qualityEd
   const rows = data.rows;
   if (rows.length === 0) return <p className="text-sm" style={{ color: COLORS.textMuted }}>No hay panorama disponible para este alumno.</p>;
   const hasEdits = Object.keys(edits).length > 0 || Object.keys(longEdits).length > 0 || Object.keys(qualityEdits).length > 0;
+  const fijadas = student.semanasFijadas || {};
+  const pasadas = Object.keys(student.weeks || {}).map(Number).filter((n) => n >= 1 && n < currentWeek).sort((a, b) => b - a);
+  const alternar = (wk) => setAbierta((a) => (a === wk ? null : wk));
+  const Flecha = ({ wk }) => (abierta === wk
+    ? <ChevronDown size={14} style={{ color: COLORS.track, flexShrink: 0 }} />
+    : <ChevronRight size={14} style={{ color: COLORS.textMuted, flexShrink: 0 }} />);
   return (
     <div>
+      <p className="text-[11px] mb-2" style={{ color: COLORS.textMuted }}>Toca una semana para ver su detalle día por día.</p>
+      {pasadas.length > 0 && (
+        <div className="mb-3">
+          <button onClick={() => setVerPasadas((v) => !v)} className="flex items-center gap-1.5 text-xs font-semibold" style={{ color: COLORS.lane }}>
+            {verPasadas ? <ChevronDown size={14} /> : <ChevronRight size={14} />} Semanas anteriores ({pasadas.length})
+          </button>
+          {verPasadas && (
+            <div className={abierta != null ? "space-y-2 mt-2" : "space-y-2 mt-2 max-h-[32rem] overflow-y-auto pr-1"}>
+              {pasadas.map((wk) => {
+                const w = student.weeks[wk];
+                return (
+                  <div key={wk} className="rounded-lg px-3 py-2 text-xs" style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}` }}>
+                    <button onClick={() => alternar(wk)} className="w-full flex items-center gap-2 text-left">
+                      <Flecha wk={wk} />
+                      <span className="flex-1" style={{ color: COLORS.textMuted }}>{getWeekTitle(student, wk)}</span>
+                      <span className="font-mono" style={{ color: COLORS.textPrimary }}>{w?.weeklyKm != null ? `${w.weeklyKm} km` : ""}</span>
+                      {w?.phase && PHASE_LABEL[w.phase] && <Pill color={COLORS.easy}>{PHASE_LABEL[w.phase]}</Pill>}
+                    </button>
+                    {abierta === wk && <SemanaDelPanorama student={student} weekNum={wk} onFijar={onFijar} busy={busy} />}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
       <div className="flex text-[10px] uppercase tracking-wide px-3 mb-1" style={{ color: COLORS.textMuted }}>
         <span className="flex-1">Semana</span>
         <span className="w-20 text-right mr-2">Total</span>
         <span className="w-20 text-right mr-2">Fondo Dom.</span>
         <span className="w-20 text-right">Fase</span>
       </div>
-      <div className="space-y-2 max-h-[32rem] overflow-y-auto pr-1">
+      {/* Con una semana abierta se quita el scroll interno: sus días necesitan espacio. */}
+      <div className={abierta != null ? "space-y-2" : "space-y-2 max-h-[32rem] overflow-y-auto pr-1"}>
         {rows.map((r) => {
-          const isFuture = r.weekNum >= currentWeek;
-          const val = edits[r.weekNum] !== undefined ? edits[r.weekNum] : r.km;
-          const longVal = longEdits[r.weekNum] !== undefined ? longEdits[r.weekNum] : r.longKm;
+          const fij = fijadas[r.weekNum]?.plan?.length ? fijadas[r.weekNum] : null;
+          const isFuture = r.weekNum >= currentWeek && !fij;
+          const val = fij ? fij.weeklyKm : edits[r.weekNum] !== undefined ? edits[r.weekNum] : r.km;
+          const longVal = fij ? (fij.plan.find((d) => d.slot === "long")?.km ?? "–") : longEdits[r.weekNum] !== undefined ? longEdits[r.weekNum] : r.longKm;
           return (
             <div key={r.weekNum} className="rounded-lg px-3 py-2 text-xs"
               style={{ background: COLORS.surface2, border: `1px solid ${r.isPeak ? COLORS.track : COLORS.border}` }}>
               <div className="flex items-center gap-2">
-                <span className="flex-1" style={{ color: COLORS.textMuted }}>
-                  {getWeekTitle(student, r.weekNum)} {r.weeksToRace === 0 ? "(carrera)" : `· faltan ${r.weeksToRace} sem.`}
-                </span>
+                <button onClick={() => alternar(r.weekNum)} className="flex-1 flex items-center gap-1.5 text-left" style={{ color: COLORS.textMuted }}>
+                  <Flecha wk={r.weekNum} />
+                  <span>
+                    {getWeekTitle(student, r.weekNum)} {r.weeksToRace === 0 ? "(carrera)" : `· faltan ${r.weeksToRace} sem.`}
+                    {r.weekNum === currentWeek && <span style={{ color: COLORS.track }}> · vigente</span>}
+                    {fij && <span className="inline-flex items-center gap-0.5 ml-1" style={{ color: COLORS.track }}><Pin size={10} /> fijada</span>}
+                  </span>
+                </button>
                 {isFuture ? (
                   <input type="number" min="0" step="0.5" value={val}
                     onChange={(e) => onEdit(r.weekNum, Number(e.target.value))}
@@ -2651,7 +2824,15 @@ function PanoramaPanel({ data, student, currentWeek, edits, longEdits, qualityEd
                   </Pill>
                 </span>
               </div>
-              {(r.q1Detail || r.q2Detail || r.q3Detail) && (
+              {fij && abierta !== r.weekNum && (
+                <div className="mt-1.5 pt-1.5 space-y-1" style={{ borderTop: `1px dashed ${COLORS.border}` }}>
+                  {fij.plan.filter((d) => ["q1", "q2", "q3"].includes(d.slot) && d.paceKey && d.paceKey !== "E").map((d, i) => (
+                    <div key={i}><span style={{ color: COLORS.textMuted }}>{d.day}: <span style={{ color: COLORS.textPrimary }}>{d.type}</span></span></div>
+                  ))}
+                </div>
+              )}
+              {abierta === r.weekNum && <SemanaDelPanorama student={student} weekNum={r.weekNum} onFijar={onFijar} busy={busy} />}
+              {!fij && abierta !== r.weekNum && (r.q1Detail || r.q2Detail || r.q3Detail) && (
                 <div className="mt-1.5 pt-1.5 space-y-1" style={{ borderTop: `1px dashed ${COLORS.border}` }}>
                   {["q1", "q2", "q3"].map((qk) => {
                     const dayLabel = qk === "q1" ? "Mar" : qk === "q2" ? "Jue" : "Sáb";
@@ -3466,6 +3647,15 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
     setBusy(false);
   };
 
+  // Fija (o libera, con semana = null) una semana futura editada desde el panorama.
+  const fijarSemanaDelPanorama = async (wk, semana) => {
+    if (!student) return;
+    setBusy(true);
+    const updated = fijarSemana(student, wk, semana);
+    const ok = await safeSet(`student:${student.id}`, updated);
+    if (ok) setStudent(updated);
+    setBusy(false);
+  };
   const savePanorama = async () => {
     if (!student) return;
     setBusy(true);
@@ -4082,12 +4272,12 @@ const resetPlan = async () => {
               {showPanorama && (
                 <div className="rounded-xl p-4 mb-4" style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}` }}>
                   <div className="text-sm font-semibold mb-3" style={{ color: COLORS.textPrimary, fontFamily: "'Oswald', sans-serif" }}>PANORAMA: VOLUMEN Y ESTRUCTURA SEMANAL</div>
-                  <p className="text-xs mb-3" style={{ color: COLORS.textMuted }}>Proyección hasta la carrera: 3 semanas de carga + 1 de asimilación, con afinamiento al final. Puedes editar el volumen de semanas futuras.</p>
+                  <p className="text-xs mb-3" style={{ color: COLORS.textMuted }}>Proyección hasta la carrera: 3 semanas de carga + 1 de asimilación, con afinamiento al final. Puedes editar el volumen de semanas futuras, o abrir una semana y editarla día por día.</p>
                   <PanoramaPanel data={panoramaData} student={student} currentWeek={student.currentWeek} edits={panoramaEdits} longEdits={panoramaLongEdits} qualityEdits={qualityEdits}
                     onEdit={(wk, val) => setPanoramaEdits((e) => ({ ...e, [wk]: val }))}
                     onEditLong={(wk, val) => setPanoramaLongEdits((e) => ({ ...e, [wk]: val }))}
                     onEditQuality={handleEditQuality}
-                    onSave={savePanorama} busy={busy} />
+                    onSave={savePanorama} onFijar={fijarSemanaDelPanorama} busy={busy} />
                 </div>
               )}
 

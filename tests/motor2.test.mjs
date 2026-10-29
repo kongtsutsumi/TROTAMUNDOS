@@ -255,6 +255,84 @@ section("Alumnos del motor anterior no cambian");
   check(E.usaMotor2(viejo) === false && E.usaMotor2(s) === true, "usaMotor2 distingue");
 }
 
+section("Progresiones: sin strides");
+{
+  const prog = { day: "Mié", slot: "e1", paceKey: "E", km: 8, type: "Easy + progresiones", extra: "progresiones" };
+  check(E.conProgresiones(prog) && !E.conStrides(prog), "un rodaje con progresiones no lleva strides");
+  check(!E.conStrides({ ...prog, strides: true }), "ni aunque quedara marcado de antes");
+  const segs = E.buildLiveSegments ? E.buildLiveSegments({ ...prog, strides: true }, 6.5) : null;
+  if (Array.isArray(segs)) check(!segs.some((x) => /Stride/.test(x.label || "")), "el modo en vivo no agrega strides");
+}
+
+section("Panorama: semanas futuras proyectadas y fijadas");
+for (const [goal, level, pace, race] of [["42k", "avanzado", "5:00", "2027-04-25"], ["21k", "intermedio", "5:30", "2027-03-07"], ["10k", "intermedio1", "5:30", "2027-02-07"]]) {
+  // La proyección es exactamente la semana que se publicará si el alumno cumple todo.
+  let s = crear(goal, level, pace, race);
+  let iguales = 0, total = 0;
+  for (let w = 1; w <= 30; w++) {
+    const wk = s.weeks[w]; if (!wk || wk.phase === "race") break;
+    const proy = E.proyectarSemana(s, w + 1);
+    const log = wk.plan.map((d) => d.paceKey ? { completed: true, actualKm: String(d.km), rpe: "5" } : { completed: false });
+    s.weeks[w] = { ...wk, log, submitted: true, studentSubmitted: true };
+    const r = E.autoPublishDueWeek(s, add(START, 7 * w));
+    if (!r.published) break;
+    s = r.updated; total++;
+    if (proy && proy.weeklyKm === s.weeks[w + 1].weeklyKm && JSON.stringify(proy.plan) === JSON.stringify(s.weeks[w + 1].plan)) iguales++;
+  }
+  check(total > 5 && iguales === total, `${goal}: la proyección coincide con la semana publicada (${iguales}/${total})`);
+
+  // Fijar la semana 4 con cambios propios: llega tal cual, avisada, y deja de estar pendiente.
+  let t = crear(goal, level, pace, race);
+  check(E.proyectarSemana(t, 1) === null, `${goal}: la semana vigente no se proyecta`);
+  const p4 = E.proyectarSemana(t, 4);
+  const plan4 = p4.plan.map((d) => (d.slot === "q1" ? { ...d, type: "Mi sesión especial", repsOverride: 5 } : d));
+  t = E.fijarSemana(t, 4, { ...p4, plan: plan4, weeklyKm: p4.weeklyKm + 3 }, "2026-11-01T00:00:00Z");
+  check(E.proyectarSemana(t, 4).fijada === true, `${goal}: la semana fijada se muestra como fijada`);
+  const proyFij = E.projectWeeklyVolumes(t);
+  check(proyFij.kind === "race", `${goal}: el panorama sigue siendo de carrera`);
+  // Semana 2 normal (falló todo: adherencia 0) y 3 normal.
+  for (let w = 1; w <= 3; w++) {
+    const wk = t.weeks[w];
+    const log = wk.plan.map(() => ({ completed: false }));
+    t.weeks[w] = { ...wk, log, submitted: true, studentSubmitted: true };
+    if (w === 3) {
+      const prop = E.buildWeekProposal(t);
+      check(prop.semanaFijada === true, `${goal}: la propuesta avisa que la semana que viene está fijada`);
+    }
+    const r = E.autoPublishDueWeek(t, add(START, 7 * w));
+    t = r.updated;
+  }
+  const w4 = t.weeks[4];
+  check(w4 && w4.fijadaPorCoach === true, `${goal}: la semana 4 llega marcada como fijada`);
+  check(w4 && JSON.stringify(w4.plan) === JSON.stringify(plan4), `${goal}: la semana fijada se respeta tal cual aunque no haya cumplido`);
+  check(w4 && w4.weeklyKm === p4.weeklyKm + 3, `${goal}: con el volumen que puso el coach`);
+  check(w4 && /fijada/i.test(w4.note || "") && /Revísala|revisa/i.test(w4.note || ""), `${goal}: la nota le pide al coach revisarla`);
+  check(!t.semanasFijadas || !t.semanasFijadas[4], `${goal}: ya no queda pendiente`);
+  // Volver a la propuesta del motor.
+  let u = E.fijarSemana(crear(goal, level, pace, race), 6, E.proyectarSemana(crear(goal, level, pace, race), 6));
+  u = E.fijarSemana(u, 6, null);
+  check(!u.semanasFijadas && E.proyectarSemana(u, 6).fijada === false, `${goal}: se puede soltar la semana fijada`);
+}
+{
+  // Cerrando la semana desde el panel del coach (finalizeWeekPlan) también se respeta.
+  let t = crear("21k", "intermedio", "5:30", "2027-03-07");
+  const p2 = E.proyectarSemana(t, 2);
+  const plan2 = p2.plan.map((d, i) => (i === 0 ? { ...d } : d)).reverse().map((d, i) => ({ ...d, day: p2.plan[i].day }));
+  t = E.fijarSemana(t, 2, { ...p2, plan: plan2 });
+  t.weeks[1] = { ...t.weeks[1], submitted: true };
+  const prop = E.buildWeekProposal(t);
+  const fin = E.finalizeWeekPlan(t, prop, { weeklyKm: 99, longRunKm: 30, q1PaceKey: prop.suggestedQ1, q2PaceKey: prop.suggestedQ2 });
+  check(JSON.stringify(fin.updated.weeks[2].plan) === JSON.stringify(plan2), "cierre manual: usa la semana fijada (con días movidos)");
+  check(fin.updated.weeks[2].weeklyKm === p2.weeklyKm, "cierre manual: ignora el volumen del formulario");
+  check(fin.updated.currentWeek === 2 && !fin.updated.semanasFijadas, "cierre manual: avanza y limpia la marca");
+  // Hueco de semanas (caso A de la publicación automática): también se respeta.
+  let g = crear("21k", "intermedio", "5:30", "2027-03-07");
+  const p3 = E.proyectarSemana(g, 3);
+  g = E.fijarSemana(g, 3, p3);
+  const r = E.autoPublishDueWeek(g, add(START, 14));
+  check(r.published === 3 && r.updated.weeks[3].fijadaPorCoach && JSON.stringify(r.updated.weeks[3].plan) === JSON.stringify(p3.plan), "tras un hueco, la semana fijada se publica tal cual");
+}
+
 console.log("\n────────────────────────────────────────────────────");
 console.log(fail ? `✗ ${fail} fallaron, ${ok} correctas.` : `✓ ${ok} verificaciones, todas correctas.`);
 process.exit(fail ? 1 : 0);
