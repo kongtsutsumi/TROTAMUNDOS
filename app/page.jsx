@@ -86,6 +86,7 @@ import {
   getRepresentativePace,
   getSessionBars,
   conStrides,
+  marcarCalentamientoCorto,
   getSessionDetail,
   getStageTable,
   getTPaceForDuration,
@@ -3518,12 +3519,13 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
       const q2Reps = cwQuality?.q2Reps ?? (cwQuality?.q2Dist || q2TypeChanged ? null : qpNow.q2Reps);
       newPlan = newPlan.map((d) => {
         if (d.slot === "q1" && q1Dist) { const next = { ...d, distOverride: q1Dist, repsOverride: q1Reps || undefined }; return { ...next, km: computeImpliedKm(next) }; }
-        if (d.slot === "q2" && q2Dist && q2PaceKey === "brokenT") { const next = { ...d, distOverride: q2Dist, brokenTRefMin: q2TypeChanged ? null : qpNow.q2RefMin, recoveryOverride: q2Reps }; return { ...next, km: computeImpliedKm(next) }; }
+        if (d.slot === "q2" && q2Dist && q2PaceKey === "brokenT") { const next = { ...d, distOverride: q2Dist, brokenTRefMin: q2TypeChanged ? null : qpNow.q2RefMin, recoveryOverride: q2Reps, ...(!q2TypeChanged && !cwQuality?.q2Dist && qpNow.q2BrokenReps ? { repsOverride: qpNow.q2BrokenReps } : {}) }; return { ...next, km: computeImpliedKm(next) }; }
         if (d.slot === "q2" && q2Dist && q2PaceKey === "I") { const next = { ...d, distOverride: q2Dist, repsOverride: q2Reps || undefined }; return { ...next, km: computeImpliedKm(next) }; }
         if (d.slot === "q2" && q2Dist && (q2PaceKey === "fartlek" || q2PaceKey === "hills")) { const next = { ...d, distOverride: q2Dist, repsOverride: q2Reps || undefined, ...(q2TypeChanged || cwQuality?.q2Dist || qpNow.q2Rec == null ? {} : { recoveryOverride: qpNow.q2Rec }) }; return { ...next, km: computeImpliedKm(next) }; }
         if (d.slot === "q3" && cwQuality?.q3Type) return { ...d, paceKey: cwQuality.q3Type === "broken" ? "broken" : "E", runWalk: cwQuality.q3Type !== "broken" };
         return d;
       });
+      if (v2) newPlan = marcarCalentamientoCorto(newPlan, !!qpNow.calentamientoCorto);
       newPlan = v2
         ? cerrarSemanaV2(newPlan, newWeeklyKm, { qualityCapPct: qualityCapPctOf(student), phase: week.phase, peakLongKm: student.peakLongKm })
         : balanceWeeklyVolume(newPlan, newWeeklyKm);

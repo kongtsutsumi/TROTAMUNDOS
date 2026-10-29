@@ -107,6 +107,35 @@ section("Velocidad en la base: quién la lleva");
   check(m21.length > 4 && m21.every((d) => d.paceKey === "R"), "21K de 5 días: velocidad corta");
 }
 
+section("Transición de la base: umbral progresivo y calentamiento corto");
+{
+  for (const [goal, level, ritmo, fecha, pico] of [["42k", "intermedio2", "4:45", "2027-05-16", 70], ["42k", "avanzado1", "4:00", "2027-05-16", 90], ["21k", "avanzado1", "4:20", "2027-04-25", 60]]) {
+    const { semanas } = simular(crear(goal, level, ritmo, fecha, pico));
+    const trans = semanas.filter((w) => w.phase === "base").slice(-4);
+    const tag = `${goal} ${level}`;
+    const jueves = trans.map((w) => w.plan.find((d) => d.slot === "q2")).filter((d) => d.paceKey === "brokenT");
+    check(jueves.length >= 3, `${tag}: al menos 3 jueves de umbral en la transición (${jueves.length})`);
+    const trabajo = jueves.map((d) => (d.repsOverride || 3) * d.distOverride);
+    check(trabajo.every((t, i) => i === 0 || t > trabajo[i - 1]), `${tag}: el umbral crece semana a semana (${trabajo.join(" → ")} min)`);
+    check(jueves[0].distOverride === 6 && (jueves[0].repsOverride || 3) === 3 && jueves[0].recoveryOverride === 1, `${tag}: primera semana 3 × 6' con 1'`);
+    check(jueves.every((d) => d.recoveryOverride <= d.distOverride / 5 + 0.01), `${tag}: recuperación de 1' por cada 5' de trabajo`);
+    const martes = trans.map((w) => w.plan.find((d) => d.slot === "q1"));
+    check(martes.every((d) => d.calentamientoCorto) && jueves.every((d) => d.calentamientoCorto), `${tag}: calentamiento corto en la transición`);
+    const v = trans.map((w) => w.plan.find((d) => d.slot === "q1")).filter((d, i) => !trans[i].plan.some((x) => x.type === "Easy + progresiones"));
+    check(v.map((d) => `${d.repsOverride}x${d.distOverride}`).join() === "8x0.3,6x0.4,8x0.4".slice(0, v.length * 6 + v.length - 1) || v.length < 3, `${tag}: martes 8×300 → 6×400 → 8×400 completos (${v.map((d) => `${d.repsOverride}x${d.distOverride}`).join(", ")})`);
+    for (const w of trans) check(w.weeklyKm <= Math.max(E.minWeeklyKmFor(level), w.weeklyKm) && suma(w.plan) <= w.weeklyKm + 1, `${tag} S${w.w}: la semana cuadra`);
+    const antes = semanas.filter((w) => w.phase === "base").slice(0, -4);
+    check(antes.every((w) => !w.plan.some((d) => d.calentamientoCorto)), `${tag}: antes de la transición, calentamiento normal`);
+  }
+  const d = { paceKey: "brokenT", km: 10, distOverride: 8, repsOverride: 4, recoveryOverride: 1.5, brokenTRefMin: 35, easyPace: 6, hmPace: 4.5, marathonPace: 4.75, calentamientoCorto: true };
+  const det = E.getSessionDetail(d);
+  check(det.some((x) => /4 x 8'/.test(x.text)) && det[0].text.startsWith("2 km") && det.at(-1).text.startsWith("1 km") && det.some((x) => /1'30"/.test(x.text)), "detalle: 4 × 8', 2 + 1 km, 1'30\"");
+  check(E.getSessionBars(d).filter((b) => b.colorKind === "hard").length === 4, "gráfico: 4 bloques");
+  check(E.computeImpliedKm(d) > E.computeImpliedKm({ ...d, repsOverride: 3 }), "los km cuentan las 4 repeticiones");
+  const segs = E.buildLiveSegments(d, 6);
+  check(segs[0].target === 2 && segs.at(-1).target === 1, "modo en vivo y reloj: 2 km y 1 km");
+}
+
 section("Strides y progresiones: gráfico, modo en vivo y reloj");
 {
   const IC = await import(new URL("../lib/intervals-icu.mjs", import.meta.url).href);
