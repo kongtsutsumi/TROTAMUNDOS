@@ -333,6 +333,29 @@ for (const [goal, level, pace, race] of [["42k", "avanzado", "5:00", "2027-04-25
   check(r.published === 3 && r.updated.weeks[3].fijadaPorCoach && JSON.stringify(r.updated.weeks[3].plan) === JSON.stringify(p3.plan), "tras un hueco, la semana fijada se publica tal cual");
 }
 
+section("Ritmos fijados a mano en la tabla");
+{
+  const s = crear("21k", "intermedio", "5:30", "2027-03-07");
+  const p = s.paces;
+  const auto400 = E.getRPace(p.R, p.HM, 0.4), auto2k = E.getIPace(p.HM, p.M, 2), auto40 = E.getTPaceForDuration(p.HM, p.M, 40);
+  const fijos = { R: { "0.4": auto400 - 0.1 }, I: { "2": auto2k + 0.05 }, T: { "40": auto40 - 0.05 } };
+  check(E.getRPace(p.R, p.HM, 0.4, fijos) === auto400 - 0.1, "400 m usa el ritmo fijado");
+  check(E.getRPace(p.R, p.HM, 0.6, fijos) === E.getRPace(p.R, p.HM, 0.6), "600 m sigue calculado");
+  check(E.getIPace(p.HM, p.M, 2, fijos) === auto2k + 0.05, "2 km usa el ritmo fijado");
+  check(E.getTPaceForDuration(p.HM, p.M, 40, fijos) === auto40 - 0.05, "umbral 40' usa el ritmo fijado");
+  check(E.getTPaceForDuration(p.HM, p.M, 30, fijos) === E.getTPaceForDuration(p.HM, p.M, 30), "umbral 30' sigue calculado");
+  const pf = { ...p, fijos };
+  const r = E.buildInitialRacePlan("21k", "intermedio", s.peakKm, s.peakLongKm, s.weeksToRace, pf, { motor: 2, qualityCapPct: 0.25, planStartWeeksToRace: s.weeksToRace, planWeek: 1 });
+  check(r.plan.filter((d) => d.paceKey).every((d) => d.ritmosFijos === fijos), "cada sesión nueva lleva los ritmos fijados");
+  const dia = { day: "Mar", slot: "q1", paceKey: "R", km: 9, distOverride: 0.4, repsOverride: 8, easyPace: p.E, hmPace: p.HM, marathonPace: p.M, targetPace: p.R, ritmosFijos: fijos };
+  const rep = E.buildLiveSegments(dia, p.E).find((x) => /de 8$/.test(x.label || "") && x.pace && x.pace < p.E);
+  check(rep && Math.abs(rep.pace - (auto400 - 0.1)) < 1e-9, "el reloj y el modo en vivo usan el ritmo fijado");
+  const sin = r.plan.map((d) => { const { ritmosFijos, ...x } = d; return x; });
+  const r0 = E.buildInitialRacePlan("21k", "intermedio", s.peakKm, s.peakLongKm, s.weeksToRace, p, { motor: 2, qualityCapPct: 0.25, planStartWeeksToRace: s.weeksToRace, planWeek: 1 });
+  check(r0.plan.every((d) => !("ritmosFijos" in d)), "sin ritmos fijados, las sesiones no cambian");
+  check(sin.length === r0.plan.length, "misma estructura");
+}
+
 console.log("\n────────────────────────────────────────────────────");
 console.log(fail ? `✗ ${fail} fallaron, ${ok} correctas.` : `✓ ${ok} verificaciones, todas correctas.`);
 process.exit(fail ? 1 : 0);

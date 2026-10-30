@@ -90,6 +90,7 @@ import {
   proyectarSemana,
   fijarSemana,
   admiteCalentamientoLibre,
+  claveRitmo,
   marcarCalentamientoCorto,
   getSessionDetail,
   getStageTable,
@@ -2920,6 +2921,15 @@ function RitmosPanel({ student, onSave, busy }) {
     E: formatPace(paces.E), long: formatPace(paces.long), M: formatPace(paces.M),
     HM: formatPace(paces.HM), R: formatPace(paces.R),
   });
+  // Ritmos fijados a mano por distancia o duración (series, intervalos, umbral). Mientras
+  // no se fijen, se calculan solos como siempre.
+  const [fx, setFx] = useState(() => {
+    const out = {};
+    for (const g of ["R", "I", "T"]) {
+      for (const [k, v] of Object.entries(paces.fijos?.[g] || {})) out[`${g}:${k}`] = formatPace(v);
+    }
+    return out;
+  });
   const [msg, setMsg] = useState("");
   if (!paces.M) {
     return (
@@ -2931,14 +2941,34 @@ function RitmosPanel({ student, onSave, busy }) {
     );
   }
 
-  const row = (label, pace) => (
-    <div className="flex items-center justify-between rounded-lg px-3 py-2 text-xs" style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}` }}>
-      <span style={{ color: COLORS.textMuted }}>{label}</span>
-      <span style={{ color: COLORS.textPrimary, fontFamily: "'JetBrains Mono', monospace" }}>{formatPace(pace)}/km</span>
-    </div>
-  );
+  // El ritmo que la app calcularía sola para esa distancia o duración (sin lo fijado a mano).
+  const base = (k) => parsePaceToDecimal(vals[k]) ?? paces[k];
+  const calculado = (g, n) => (g === "R" ? getRPace(base("R"), base("HM"), n)
+    : g === "I" ? getIPace(base("HM"), base("M"), n)
+      : getTPaceForDuration(base("HM"), base("M"), n));
+  const fixedRow = (g, n, label) => {
+    const key = `${g}:${claveRitmo(n)}`;
+    const fijo = fx[key] !== undefined && fx[key] !== formatPace(calculado(g, n));
+    return (
+      <div key={key} className="flex items-center justify-between rounded-lg px-3 py-2 text-xs gap-2"
+        style={{ background: COLORS.surface2, border: `1px solid ${fijo ? COLORS.track : COLORS.border}` }}>
+        <span style={{ color: COLORS.textMuted }}>{label}</span>
+        <span className="flex items-center gap-2">
+          {fijo && (
+            <button type="button" onClick={() => setFx((f) => { const { [key]: _x, ...rest } = f; return rest; })}
+              title="Volver al ritmo calculado" className="text-[10px]" style={{ color: COLORS.track }}>
+              fijado · ↺
+            </button>
+          )}
+          <input type="text" value={fx[key] ?? formatPace(calculado(g, n))}
+            onChange={(e) => setFx((f) => ({ ...f, [key]: e.target.value }))}
+            className="w-20 rounded px-2 py-1 text-xs font-mono text-right" style={{ background: COLORS.bg, color: COLORS.lane, border: `1px solid ${COLORS.border}` }} />
+        </span>
+      </div>
+    );
+  };
   const editRow = (key, label) => (
-    <div className="flex items-center justify-between rounded-lg px-3 py-2 text-xs gap-2" style={{ background: COLORS.surface2, border: `1px solid ${COLORS.track}` }}>
+    <div className="flex items-center justify-between rounded-lg px-3 py-2 text-xs gap-2" style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}` }}>
       <span style={{ color: COLORS.textMuted }}>{label}</span>
       <input type="text" value={vals[key]} onChange={(e) => setVals((v) => ({ ...v, [key]: e.target.value }))}
         className="w-20 rounded px-2 py-1 text-xs font-mono text-right" style={{ background: COLORS.bg, color: COLORS.lane, border: `1px solid ${COLORS.border}` }} />
@@ -2950,14 +2980,16 @@ function RitmosPanel({ student, onSave, busy }) {
     if (m == null) return setMsg("Ingresa un ritmo maratón válido (m:ss) antes de recalcular.");
     const derived = deriveAllFromM(m);
     setVals({ E: formatPace(derived.E), long: formatPace(derived.long), M: formatPace(derived.M), HM: formatPace(derived.HM), R: formatPace(derived.R) });
-    setMsg("Tabla recalculada desde el ritmo maratón. Revisa y guarda si está bien.");
+    setFx({});
+    setMsg("Tabla recalculada desde el ritmo maratón. Los ritmos fijados a mano vuelven a calcularse. Revisa y guarda si está bien.");
   };
   const recalcFromHM = () => {
     const hm = parsePaceToDecimal(vals.HM);
     if (hm == null) return setMsg("Ingresa un ritmo media maratón válido (m:ss) antes de recalcular.");
     const derived = deriveAllFromHM(hm);
     setVals({ E: formatPace(derived.E), long: formatPace(derived.long), M: formatPace(derived.M), HM: formatPace(derived.HM), R: formatPace(derived.R) });
-    setMsg("Ritmo de media maratón convertido a ritmo maratón equivalente, y tabla recalculada. Revisa y guarda si está bien.");
+    setFx({});
+    setMsg("Ritmo de media maratón convertido a ritmo maratón equivalente, y tabla recalculada. Los ritmos fijados a mano vuelven a calcularse. Revisa y guarda si está bien.");
   };
 
   const save = async () => {
@@ -2966,6 +2998,16 @@ function RitmosPanel({ student, onSave, busy }) {
       const p = parsePaceToDecimal(vals[k]);
       if (p != null) parsed[k] = p;
     }
+    // Solo queda fijo lo que el coach dejó distinto del ritmo calculado.
+    const fijos = {};
+    for (const [key, txt] of Object.entries(fx)) {
+      const [g, k] = key.split(":");
+      const p = parsePaceToDecimal(txt);
+      if (p == null) return setMsg(`El ritmo "${txt}" no es válido: escríbelo como m:ss.`);
+      if (formatPace(p) === formatPace(calculado(g, Number(k)))) continue;
+      fijos[g] = { ...(fijos[g] || {}), [k]: p };
+    }
+    parsed.fijos = Object.keys(fijos).length ? fijos : null;
     setMsg("");
     const ok = await onSave(parsed);
     setMsg(ok ? "Ritmos actualizados. Se usarán desde la próxima semana que generes." : "No se pudo guardar.");
@@ -2991,7 +3033,7 @@ function RitmosPanel({ student, onSave, busy }) {
         {msg && <p className="text-xs mt-2" style={{ color: COLORS.moderate }}>{msg}</p>}
       </div>
       <p className="text-xs" style={{ color: COLORS.textMuted }}>
-        También puedes editar cualquier fila individual a mano en cualquier momento (sin recalcular el resto).
+        Puedes editar cualquier fila a mano. Las que cambies quedan <b style={{ color: COLORS.track }}>fijadas</b> (no se recalculan solas); toca ↺ para que vuelvan al ritmo calculado.
       </p>
       <div>
         <div className="text-xs font-semibold mb-2" style={{ color: COLORS.textMuted }}>RECUPERACIÓN / RODAJE SUAVE</div>
@@ -3007,16 +3049,16 @@ function RitmosPanel({ student, onSave, busy }) {
         <div className="text-xs font-semibold mb-2" style={{ color: COLORS.textMuted }}>REPETICIONES (base 200m, resto se extrapola)</div>
         <div className="space-y-1.5">
           {editRow("R", "200 m")}
-          {R_DISTANCES.filter((d) => d !== 0.2).map((d) => row(formatDist(d), getRPace(parsePaceToDecimal(vals.R) ?? paces.R, parsePaceToDecimal(vals.HM) ?? paces.HM, d)))}
+          {R_DISTANCES.filter((d) => d !== 0.2).map((d) => fixedRow("R", d, formatDist(d)))}
         </div>
       </div>
       <div>
         <div className="text-xs font-semibold mb-2" style={{ color: COLORS.textMuted }}>INTERVALOS (por distancia)</div>
-        <div className="space-y-1.5">{I_DISTANCES.map((d) => row(formatDist(d), getIPace(parsePaceToDecimal(vals.HM) ?? paces.HM, parsePaceToDecimal(vals.M) ?? paces.M, d)))}</div>
+        <div className="space-y-1.5">{I_DISTANCES.map((d) => fixedRow("I", d, formatDist(d)))}</div>
       </div>
       <div>
         <div className="text-xs font-semibold mb-2" style={{ color: COLORS.textMuted }}>UMBRAL CONTINUO (por duración)</div>
-        <div className="space-y-1.5">{T_DURATIONS.map((t) => row(`${t} minutos`, getTPaceForDuration(parsePaceToDecimal(vals.HM) ?? paces.HM, parsePaceToDecimal(vals.M) ?? paces.M, t)))}</div>
+        <div className="space-y-1.5">{T_DURATIONS.map((t) => fixedRow("T", t, `${t} minutos`))}</div>
       </div>
       <div className="flex items-center gap-3">
         <button onClick={save} disabled={busy} className="px-4 py-1.5 rounded text-sm font-semibold" style={{ background: COLORS.track, color: COLORS.lane }}>Guardar ritmos</button>
@@ -3255,6 +3297,7 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
     if (!student) return false;
     setBusy(true);
     const newPaces = { ...(student.paces || {}), ...parsed };
+    if (!parsed.fijos) delete newPaces.fijos;
     const updated = { ...student, paces: newPaces };
     const ok = await safeSet(`student:${student.id}`, updated);
     if (ok) setStudent(updated);
