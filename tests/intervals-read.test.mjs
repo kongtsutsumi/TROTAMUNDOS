@@ -524,6 +524,39 @@ console.log("\n▸ Dónde paró (solo calidad y fondos, solo si paró 10 s o má
     R.resumenDeActividad({ id: 1, distance: 1000, moving_time: 300, elapsed_time: 300 }, [{ distance: 1000, moving_time: 270, elapsed_time: 295 }]).vueltas[0].segTotal === 295);
 }
 
+// --- Kilómetro por kilómetro ---
+{
+  // 3,5 km: el 1.º a 5:00, el 2.º a 4:40 con una parada de 60 s en medio, el 3.º a 5:20,
+  // y medio km final a 5:00. Un registro por segundo.
+  const tiempo = [], distancia = [], fc = [];
+  let t = 0, d = 0;
+  const tramo = (metros, segPorKm, pulso) => {
+    const v = 1000 / segPorKm;
+    const pasos = Math.round(metros / v);
+    for (let i = 0; i < pasos; i++) { t++; d += v; tiempo.push(t); distancia.push(d); fc.push(pulso); }
+  };
+  tiempo.push(0); distancia.push(0); fc.push(120);
+  tramo(1000, 300, 140);
+  tramo(500, 280, 150);
+  for (let i = 0; i < 60; i++) { t++; tiempo.push(t); distancia.push(d); fc.push(110); } // detenido
+  tramo(500, 280, 152);
+  tramo(1000, 320, 145);
+  tramo(500, 300, 147);
+  const kms = R.kmPorKm([{ type: "time", data: tiempo }, { type: "distance", data: distancia }, { type: "heartrate", data: fc }]);
+  check("Km por km: 3 km completos y el medio final", kms.length === 4, JSON.stringify(kms));
+  check("Km 1 a 5:00", kms[0]?.ritmo === "5:00", kms[0]?.ritmo);
+  check("Km 2 a 4:40: la parada no lo hace más lento", kms[1]?.ritmo === "4:40", kms[1]?.ritmo);
+  check("Km 3 a 5:20", kms[2]?.ritmo === "5:20", kms[2]?.ritmo);
+  check("El tramo final dice cuánto midió", Math.abs((kms[3]?.km ?? 0) - 0.5) < 0.02 && kms[3]?.ritmo === "5:00", JSON.stringify(kms[3]));
+  check("FC promedio del km (sin contar lo detenido)", kms[1]?.fc === 151, kms[1]?.fc);
+  check("Sin datos, sin km por km", R.kmPorKm(null).length === 0 && R.kmPorKm([{ type: "time", data: [0] }]).length === 0);
+  const res = R.resumenDeActividad({ id: 9, distance: 3500, moving_time: 1050 }, [], kms);
+  check("El resumen guarda el km por km", res.kms?.length === 4);
+  check("Sin km por km, el resumen no cambia de forma", !("kms" in R.resumenDeActividad({ id: 9, distance: 3500, moving_time: 1050 }, [])));
+  const { extras } = R.conActividadExtra([{ id: 9, km: 3.5 }], res);
+  check("Una salida adicional ya guardada recibe su km por km", extras.length === 1 && extras[0].kms?.length === 4);
+}
+
 console.log(`\n${"═".repeat(50)}`);
 console.log(`  ${passed} pruebas pasaron, ${failed} fallaron`);
 if (failures.length) {

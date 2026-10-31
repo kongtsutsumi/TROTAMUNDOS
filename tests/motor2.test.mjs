@@ -356,6 +356,19 @@ section("Ritmos fijados a mano en la tabla");
   check(sin.length === r0.plan.length, "misma estructura");
 }
 
+section("Nombre del fondo: continuo o progresivo");
+{
+  const sem = simular(crear("42k", "avanzado", "5:00", "2027-04-25")).semanas;
+  const fondos = sem.flatMap((w) => w.plan.filter((d) => d.paceKey === "long"));
+  check(fondos.length > 10, "hay fondos");
+  check(fondos.every((d) => d.type === (d.longProgressive ? "Fondo progresivo" : "Fondo continuo")), "cada fondo se llama según lo que es");
+  check(fondos.some((d) => !d.longProgressive) && fondos.some((d) => d.longProgressive), "hay de los dos");
+  check(E.nombreDeSesion({ paceKey: "long", type: "Fondo estructurado", longProgressive: false }) === "Fondo continuo", "los guardados antes se muestran bien (continuo)");
+  check(E.nombreDeSesion({ paceKey: "long", type: "Fondo estructurado", longProgressive: true }) === "Fondo progresivo", "los guardados antes se muestran bien (progresivo)");
+  check(E.nombreDeSesion({ paceKey: "long", type: "Fondo en la playa", longProgressive: true }) === "Fondo en la playa", "un nombre escrito por el coach se respeta");
+  check(E.etiquetaDeRitmo({ paceKey: "long", longProgressive: false }) === "Fondo continuo", "la etiqueta del ritmo también");
+}
+
 console.log("\n────────────────────────────────────────────────────");
 console.log(fail ? `✗ ${fail} fallaron, ${ok} correctas.` : `✓ ${ok} verificaciones, todas correctas.`);
 process.exit(fail ? 1 : 0);

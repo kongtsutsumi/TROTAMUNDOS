@@ -91,6 +91,8 @@ import {
   fijarSemana,
   admiteCalentamientoLibre,
   claveRitmo,
+  nombreDeSesion,
+  etiquetaDeRitmo,
   marcarCalentamientoCorto,
   getSessionDetail,
   getStageTable,
@@ -305,7 +307,7 @@ function buildPrintableHTML(student, week, weekNum) {
       : `<div style="font-size:12px;color:#777;">Descanso</div>`;
     return `
       <div style="margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid #ddd;break-inside:avoid;">
-        <div style="font-weight:bold;font-size:14px;">${esc(DAYS[i])} — ${esc(d.type)}${d.paceKey ? ` (${d.km} km)` : ""}</div>
+        <div style="font-weight:bold;font-size:14px;">${esc(DAYS[i])} — ${esc(nombreDeSesion(d))}${d.paceKey ? ` (${d.km} km)` : ""}</div>
         ${barSvg}
         ${detailHtml}
       </div>`;
@@ -1161,7 +1163,7 @@ function PrintableWeek({ student, week, weekNum }) {
         return (
           <div key={i} style={{ marginBottom: 14, paddingBottom: 10, borderBottom: "1px solid #ddd", breakInside: "avoid" }}>
             <div style={{ fontWeight: "bold", fontSize: 14 }}>
-              {DAYS[i]} — {d.type}{d.paceKey ? ` (${d.km} km)` : ""}
+              {DAYS[i]} — {nombreDeSesion(d)}{d.paceKey ? ` (${d.km} km)` : ""}
             </div>
             {!d.paceKey && <div style={{ fontSize: 12, color: "#777" }}>Descanso</div>}
             {detail && detail.map((seg, si) => (
@@ -1398,6 +1400,7 @@ function DatoDelReloj({ valor, etiqueta }) {
 
 function DatosDelReloj({ reloj, day, esCoach, titulo = "Del reloj" }) {
   const [verVueltas, setVerVueltas] = useState(false);
+  const [verKms, setVerKms] = useState(false);
   if (!reloj) return null;
 
   const planKm = day?.km ?? null;
@@ -1472,6 +1475,41 @@ function DatosDelReloj({ reloj, day, esCoach, titulo = "Del reloj" }) {
         <div className="text-[11px] mt-1" style={{ color: COLORS.textMuted }}>
           {difKm > 0 ? `${difKm} km más` : `${Math.abs(difKm)} km menos`} de lo planificado ({planKm} km)
         </div>
+      )}
+
+      {/* Kilómetro por kilómetro: ritmo (en movimiento) y frecuencia cardíaca de cada km. */}
+      {reloj.kms?.length > 0 && (
+        <>
+          <button type="button" onClick={() => setVerKms((v) => !v)}
+            className="text-[11px] mt-1 mr-3" style={{ color: COLORS.track }}>
+            {verKms ? "Ocultar km por km" : "Ver km por km"}
+          </button>
+          {verKms && (() => {
+            const segs = reloj.kms.filter((k) => k.km >= 0.95 && k.seg > 0).map((k) => k.seg);
+            const rapido = segs.length ? Math.min(...segs) : null;
+            const lento = segs.length ? Math.max(...segs) : null;
+            return (
+              <div className="mt-1 rounded-md px-2 py-1.5" style={{ background: COLORS.bg }}>
+                <div className="flex gap-3 text-[10px] uppercase tracking-wide mb-0.5" style={{ color: COLORS.textMuted }}>
+                  <span className="w-12 text-right">Km</span>
+                  <span className="w-16 text-right">Ritmo</span>
+                  <span className="w-14 text-right">FC</span>
+                </div>
+                {reloj.kms.map((k) => {
+                  const completo = k.km >= 0.95;
+                  const color = completo && segs.length > 2 && k.seg === rapido ? COLORS.easy : completo && segs.length > 2 && k.seg === lento ? COLORS.moderate : COLORS.lane;
+                  return (
+                    <div key={k.n} className="flex gap-3 text-[11px]" style={{ fontFamily: "'JetBrains Mono', monospace", color: COLORS.textMuted }}>
+                      <span className="w-12 text-right">{completo ? k.n : `${String(k.km).replace(".", ",")}`}</span>
+                      <span className="w-16 text-right" style={{ color }}>{k.ritmo ? `${k.ritmo}` : "—"}</span>
+                      <span className="w-14 text-right">{k.fc ? `${k.fc}` : "—"}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
+        </>
       )}
 
       {esCoach && reloj.vueltas?.length > 0 && (
@@ -1577,12 +1615,12 @@ function LapCard({ day: dayRaw, index, mode, log, onChangeDay, onChangeLog, isTo
           </div>
 
           {mode === "edit" ? (
-            <input type="text" value={day.type}
+            <input type="text" value={nombreDeSesion(day)}
               onChange={(e) => onChangeDay(index, { ...day, type: e.target.value })}
               className="mt-0.5 w-full rounded px-2 py-1 text-sm font-semibold"
               style={{ background: COLORS.bg, color: COLORS.textPrimary, border: `1px solid ${COLORS.border}`, fontFamily: "'Oswald', sans-serif" }} />
           ) : (
-            <div className="mt-0.5 text-base font-semibold truncate" style={{ fontFamily: "'Oswald', sans-serif", color: COLORS.textPrimary }}>{day.type}</div>
+            <div className="mt-0.5 text-base font-semibold truncate" style={{ fontFamily: "'Oswald', sans-serif", color: COLORS.textPrimary }}>{nombreDeSesion(day)}</div>
           )}
 
           {lapLibre && (
@@ -1900,7 +1938,7 @@ function LapCard({ day: dayRaw, index, mode, log, onChangeDay, onChangeLog, isTo
               <div className="mt-1 flex items-center gap-2 flex-wrap">
                 <span className="text-lg font-semibold" style={{ fontFamily: "'JetBrains Mono', monospace", color: COLORS.lane }}>{day.km} km</span>
                 <span className="text-xs" style={{ color: zoneColor }}>
-                  {day.paceKey && getRepresentativePace(day) ? `${PACE_KEY_LABEL[day.paceKey]} · ${formatPace(getRepresentativePace(day))}/km` : PACE_KEY_LABEL[day.paceKey] || ""}
+                  {day.paceKey && getRepresentativePace(day) ? `${etiquetaDeRitmo(day)} · ${formatPace(getRepresentativePace(day))}/km` : etiquetaDeRitmo(day)}
                 </span>
               </div>
             )
@@ -2853,7 +2891,7 @@ function PanoramaPanel({ data, student, currentWeek, edits, longEdits, qualityEd
               {fij && abierta !== r.weekNum && (
                 <div className="mt-1.5 pt-1.5 space-y-1" style={{ borderTop: `1px dashed ${COLORS.border}` }}>
                   {fij.plan.filter((d) => ["q1", "q2", "q3"].includes(d.slot) && d.paceKey && d.paceKey !== "E").map((d, i) => (
-                    <div key={i}><span style={{ color: COLORS.textMuted }}>{d.day}: <span style={{ color: COLORS.textPrimary }}>{d.type}</span></span></div>
+                    <div key={i}><span style={{ color: COLORS.textMuted }}>{d.day}: <span style={{ color: COLORS.textPrimary }}>{nombreDeSesion(d)}</span></span></div>
                   ))}
                 </div>
               )}
