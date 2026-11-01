@@ -1569,6 +1569,30 @@ function lapLibrePara(student, day, onToggle) {
   return { activo: !!day.calentamientoLibre, onToggle };
 }
 
+// Campo numérico que se puede borrar para escribir otro número. Mientras se escribe se
+// guarda solo lo que es un número válido; si se deja vacío o inválido, al salir del campo
+// vuelve al valor que tenía. Antes el campo se rellenaba solo al borrarlo (p. ej. con un 6)
+// y no había forma de escribir encima.
+function NumField({ value, min = 0, max = null, onCommit, className, style, step }) {
+  const [txt, setTxt] = useState(value == null ? "" : String(value));
+  const [enfocado, setEnfocado] = useState(false);
+  useEffect(() => { if (!enfocado) setTxt(value == null ? "" : String(value)); }, [value, enfocado]);
+  return (
+    <input type="text" inputMode="decimal" value={txt} data-step={step}
+      onFocus={(e) => { setEnfocado(true); e.target.select(); }}
+      onBlur={() => { setEnfocado(false); setTxt(value == null ? "" : String(value)); }}
+      onChange={(e) => {
+        const t = e.target.value.replace(",", ".");
+        setTxt(e.target.value);
+        if (t.trim() === "") return;
+        const n = Number(t);
+        if (!Number.isFinite(n) || n < min || (max != null && n > max)) return;
+        onCommit(n);
+      }}
+      className={className} style={style} />
+  );
+}
+
 // lapLibre: { activo, onToggle } cuando esta sesión puede llevar calentamiento y
 // enfriamiento libres en el reloj (el coach se lo permitió al alumno y es de calidad).
 function LapCard({ day: dayRaw, index, mode, log, onChangeDay, onChangeLog, isToday, isRaceGoal, onStartLive, onSwapDay, onMoveSession, esCoach, extras, lapLibre }) {
@@ -1759,17 +1783,17 @@ function LapCard({ day: dayRaw, index, mode, log, onChangeDay, onChangeLog, isTo
                   <div className="col-span-2 flex flex-wrap gap-2 pt-1" style={{ borderTop: `1px dashed ${COLORS.border}` }}>
                     <div style={{ minWidth: 80 }}>
                       <label className="block text-[9px] uppercase tracking-wide mb-1" style={{ color: COLORS.textMuted }}>Repeticiones</label>
-                      <input type="number" min="1" max="30" step="1" value={c.reps} onChange={(e) => set({ repsOverride: Number(e.target.value) || null })}
+                      <NumField min={1} max={30} value={c.reps} onCommit={(v) => set({ repsOverride: v })}
                         className="w-full rounded px-1.5 py-1 text-[11px] font-mono" style={fieldStyle} />
                     </div>
                     <div style={{ minWidth: 90 }}>
                       <label className="block text-[9px] uppercase tracking-wide mb-1" style={{ color: COLORS.textMuted }}>{fart ? "Rápido (min)" : "Subida (seg)"}</label>
-                      <input type="number" min="1" step={fart ? 0.5 : 5} value={fart ? c.workMin : c.workSec} onChange={(e) => set({ distOverride: Number(e.target.value) || null })}
+                      <NumField min={fart ? 0.25 : 5} max={fart ? 30 : 600} value={fart ? c.workMin : c.workSec} onCommit={(v) => set({ distOverride: v })}
                         className="w-full rounded px-1.5 py-1 text-[11px] font-mono" style={fieldStyle} />
                     </div>
                     <div style={{ minWidth: 90 }}>
                       <label className="block text-[9px] uppercase tracking-wide mb-1" style={{ color: COLORS.textMuted }}>{fart ? "Trote (min)" : "Bajada (min)"}</label>
-                      <input type="number" min="0" step="0.5" value={c.recMin} onChange={(e) => set({ recoveryOverride: e.target.value === "" ? null : Number(e.target.value) })}
+                      <NumField min={0} max={30} value={c.recMin} onCommit={(v) => set({ recoveryOverride: v })}
                         className="w-full rounded px-1.5 py-1 text-[11px] font-mono" style={fieldStyle} />
                     </div>
                     {fart && (
@@ -1787,9 +1811,9 @@ function LapCard({ day: dayRaw, index, mode, log, onChangeDay, onChangeLog, isTo
                 <div className="col-span-2 flex flex-wrap gap-2 pt-1" style={{ borderTop: `1px dashed ${COLORS.border}` }}>
                   <div style={{ minWidth: 90 }}>
                     <label className="block text-[9px] uppercase tracking-wide mb-1" style={{ color: COLORS.textMuted }}>Duración pasada (min)</label>
-                    <input type="number" min="1" step="1" value={day.distOverride ?? 8}
-                      onChange={(e) => {
-                        const next = { ...day, distOverride: e.target.value ? Number(e.target.value) : 8 };
+                    <NumField min={1} max={60} value={day.distOverride ?? 8}
+                      onCommit={(v) => {
+                        const next = { ...day, distOverride: v };
                         onChangeDay(index, { ...next, km: computeImpliedKm(next) });
                       }}
                       className="w-full rounded px-1.5 py-1 text-[11px] font-mono" style={{ background: COLORS.bg, color: COLORS.lane, border: `1px solid ${COLORS.border}` }} />
@@ -1807,9 +1831,9 @@ function LapCard({ day: dayRaw, index, mode, log, onChangeDay, onChangeLog, isTo
                   </div>
                   <div style={{ minWidth: 90 }}>
                     <label className="block text-[9px] uppercase tracking-wide mb-1" style={{ color: COLORS.textMuted }}>Descanso (min)</label>
-                    <input type="number" min="0" step="0.5" value={day.recoveryOverride ?? 3}
-                      onChange={(e) => {
-                        const next = { ...day, recoveryOverride: e.target.value ? Number(e.target.value) : 3 };
+                    <NumField min={0} max={30} value={day.recoveryOverride ?? 3}
+                      onCommit={(v) => {
+                        const next = { ...day, recoveryOverride: v };
                         onChangeDay(index, { ...next, km: computeImpliedKm(next) });
                       }}
                       className="w-full rounded px-1.5 py-1 text-[11px] font-mono" style={{ background: COLORS.bg, color: COLORS.lane, border: `1px solid ${COLORS.border}` }} />
@@ -1835,9 +1859,9 @@ function LapCard({ day: dayRaw, index, mode, log, onChangeDay, onChangeLog, isTo
                     ].map((f) => (
                       <div key={f.key} style={{ minWidth: 90 }}>
                         <label className="block text-[9px] uppercase tracking-wide mb-1" style={{ color: COLORS.textMuted }}>{f.label}</label>
-                        <input type="number" min="0" step={f.step} value={day[f.key] ?? f.def}
-                          onChange={(e) => {
-                            const next = { ...day, [f.key]: e.target.value ? Number(e.target.value) : f.def };
+                        <NumField min={0} max={30} step={f.step} value={day[f.key] ?? f.def}
+                          onCommit={(v) => {
+                            const next = { ...day, [f.key]: v };
                             onChangeDay(index, { ...next, km: computeImpliedKm(next) });
                           }}
                           className="w-full rounded px-1.5 py-1 text-[11px] font-mono" style={{ background: COLORS.bg, color: COLORS.lane, border: `1px solid ${COLORS.border}` }} />
@@ -1854,9 +1878,9 @@ function LapCard({ day: dayRaw, index, mode, log, onChangeDay, onChangeLog, isTo
                       ].map((f) => (
                         <div key={f.key} style={{ minWidth: 80 }}>
                           <label className="block text-[9px] uppercase tracking-wide mb-1" style={{ color: COLORS.textMuted }}>{f.label}</label>
-                          <input type="number" min="0" step={f.step} value={block[f.key] ?? f.def}
-                            onChange={(e) => {
-                              const blocks = getCustomBlocks(day).map((b, i) => i === bi ? { ...b, [f.key]: e.target.value ? Number(e.target.value) : f.def } : b);
+                          <NumField min={f.key === "recoveryMin" ? 0 : f.key === "reps" ? 1 : 0.05} max={f.key === "reps" ? 50 : 60} step={f.step} value={block[f.key] ?? f.def}
+                            onCommit={(v) => {
+                              const blocks = getCustomBlocks(day).map((b, i) => i === bi ? { ...b, [f.key]: v } : b);
                               const next = { ...day, customBlocks: blocks };
                               onChangeDay(index, { ...next, km: computeImpliedKm(next) });
                             }}
@@ -5595,14 +5619,23 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
 
   const furthestApprovedWeek = student ? Math.max(1, ...Object.keys(student.weeks).map(Number)) : null;
   const activeLogWeek = student ? getActiveLogWeek(student) : null;
-  const activeWeekNum = student ? Math.min(Math.max(viewedWeek ?? activeLogWeek, activeLogWeek), furthestApprovedWeek) : null;
+  // El alumno ve solo su semana vigente. Aunque el coach ya haya dejado lista la siguiente
+  // (por ejemplo, cerró la semana un sábado), esa no se muestra hasta que llegue su lunes.
+  // La única excepción es un plan que todavía no empieza (ver inicioPendiente).
+  const ultimaVisible = activeLogWeek;
+  const activeWeekNum = student ? Math.min(Math.max(viewedWeek ?? activeLogWeek, activeLogWeek), ultimaVisible) : null;
   const isViewingCurrent = !student || activeWeekNum === activeLogWeek;
   const week = student ? ensureWeekShape(student.weeks[activeWeekNum]) : null;
   const currentWeekData = student ? ensureWeekShape(student.weeks[activeLogWeek]) : null;
   // La semana que se está viendo es un "adelanto" si su lunes todavía no llegó: se puede
   // mirar, pero no marcar nada hasta que empiece de verdad.
   const todayWeekNum = student ? getTodayWeekNum(student) : null;
-  const isPreviewWeek = !!(student && activeWeekNum > todayWeekNum);
+  // Plan creado antes de su lunes de inicio: el alumno ya puede ver su primera semana, pero
+  // no registra nada hasta ese día. Pasado el lunes, todo vuelve a lo normal.
+  const hoyLocalISO = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; })();
+  const inicioPendiente = !!(student?.planStartMonday && hoyLocalISO < student.planStartMonday);
+  const fechaInicio = inicioPendiente ? new Date(`${student.planStartMonday}T12:00:00`).toLocaleDateString("es-PE", { weekday: "long", day: "numeric", month: "long" }) : "";
+  const isPreviewWeek = !!(student && (activeWeekNum > todayWeekNum || inicioPendiente));
   // Una semana queda como registro terminado en dos casos: cuando el propio alumno la envió,
   // o cuando su semana de calendario ya pasó. Que el coach haya dejado lista la siguiente NO
   // la cierra: mientras el alumno siga dentro de esa semana, debe poder registrar lo que le
@@ -5625,7 +5658,7 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
   const waitingForCoach = !!(currentWeekData?.submitted && activeLogWeek >= furthestApprovedWeek);
   // Desde Inicio se registra la sesión de hoy con las mismas reglas que en Plan: semana en
   // curso, no enviada todavía y sin estar esperando al coach.
-  const puedeRegistrarHoy = !!(currentWeekData && activeLogWeek === todayWeekNum && !currentWeekData.studentSubmitted && !waitingForCoach);
+  const puedeRegistrarHoy = !!(currentWeekData && !inicioPendiente && activeLogWeek === todayWeekNum && !currentWeekData.studentSubmitted && !waitingForCoach);
 
   // En los planes de fitness el alumno puede mover una sesión a un día contiguo, para
   // acomodarla a su semana sin depender del coach.
@@ -5679,7 +5712,7 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
           {currentWeekData && submitSlots.length > 0 && (
             <div className="rounded-2xl p-4" style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}` }}>
               <div className="flex items-center justify-between gap-2 mb-2">
-                <span className="text-[11px] font-bold uppercase tracking-[0.12em]" style={{ color: COLORS.textMuted }}>Esta semana</span>
+                <span className="text-[11px] font-bold uppercase tracking-[0.12em]" style={{ color: COLORS.textMuted }}>{inicioPendiente ? "Tu primera semana" : "Esta semana"}</span>
                 <span className="text-sm" style={{ color: COLORS.textMuted }}>{submitCompletedCount} de {submitSlots.length} sesiones</span>
               </div>
               <div className="flex gap-1.5 mb-3">
@@ -5687,6 +5720,11 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
                   <span key={x.i} className="flex-1 h-2 rounded-full" style={{ background: currentWeekData.log[x.i]?.completed ? COLORS.easy : COLORS.border }} />
                 ))}
               </div>
+              {inicioPendiente && (
+                <p className="text-sm mb-2" style={{ color: COLORS.textMuted }}>
+                  Tu plan empieza el <b style={{ color: COLORS.textPrimary }}>{fechaInicio}</b>. Ya puedes ver tu primera semana.
+                </p>
+              )}
               <button onClick={() => irA("semana")} className="text-sm font-semibold inline-flex items-center gap-0.5" style={{ color: COLORS.track }}>
                 Ver mi plan <ChevronRight size={15} />
               </button>
@@ -5694,7 +5732,7 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
           )}
           {/* El entrenamiento del día, completo: la misma tarjeta que en Plan, con sus ritmos,
               el detalle de la sesión, "Iniciar entrenamiento" y el registro. */}
-          {currentWeekData && activeLogWeek === todayWeekNum && (
+          {currentWeekData && activeLogWeek === todayWeekNum && !inicioPendiente && (
             <div data-testid="entrenamiento-de-hoy">
               <div className="text-[11px] font-bold uppercase tracking-[0.12em] mb-2 px-1" style={{ color: COLORS.textMuted }}>Tu entrenamiento de hoy</div>
               {currentWeekData.plan?.[todayDowIndex]?.paceKey ? (
@@ -5751,13 +5789,13 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
             style={{ background: COLORS.surface2, border: `1px solid ${COLORS.track}` }}>
             <div>
               <div className="flex items-center gap-2">
-                {furthestApprovedWeek > activeLogWeek && (
+                {ultimaVisible > activeLogWeek && (
                   <button onClick={() => setViewedWeek(Math.max(activeLogWeek, activeWeekNum - 1))} disabled={isViewingCurrent}
                     className="p-1 rounded disabled:opacity-30" style={{ color: COLORS.textMuted }}><ChevronLeft size={18} /></button>
                 )}
                 <div className="text-3xl font-bold" style={{ fontFamily: "'Oswald', sans-serif", color: COLORS.lane }}>{getWeekTitle(student, activeWeekNum)}</div>
-                {furthestApprovedWeek > activeLogWeek && (
-                  <button onClick={() => setViewedWeek(Math.min(furthestApprovedWeek, activeWeekNum + 1))} disabled={activeWeekNum >= furthestApprovedWeek}
+                {ultimaVisible > activeLogWeek && (
+                  <button onClick={() => setViewedWeek(Math.min(ultimaVisible, activeWeekNum + 1))} disabled={activeWeekNum >= ultimaVisible}
                     className="p-1 rounded disabled:opacity-30" style={{ color: COLORS.textMuted }}><ChevronRight size={18} /></button>
                 )}
                 {!isViewingCurrent && <Pill color={COLORS.moderate}>Próxima semana (vista previa)</Pill>}
@@ -5801,10 +5839,10 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
             <div className="rounded-xl p-4 mb-4" style={{ background: COLORS.moderate + "18", border: `1px solid ${COLORS.moderate}55` }}>
               <div className="flex items-center gap-2 mb-1">
                 <Clock size={16} style={{ color: COLORS.moderate }} />
-                <span className="text-sm font-semibold" style={{ color: COLORS.textPrimary }}>Adelanto de la próxima semana</span>
+                <span className="text-sm font-semibold" style={{ color: COLORS.textPrimary }}>{inicioPendiente ? `Tu plan empieza el ${fechaInicio}` : "Adelanto de la próxima semana"}</span>
               </div>
               <p className="text-sm" style={{ color: COLORS.textMuted }}>
-                Puedes ver lo que viene, pero todavía no se puede registrar nada. Se activa sola el lunes a las 00:00.
+                {inicioPendiente ? "Ya puedes ver tu primera semana. Podrás marcar tus sesiones desde ese día." : "Puedes ver lo que viene, pero todavía no se puede registrar nada. Se activa sola el lunes a las 00:00."}
               </p>
             </div>
           )}
@@ -5992,7 +6030,7 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
           <div className="max-w-4xl mx-auto grid grid-cols-5 items-end">
             {PESTANAS_ALUMNO.map(({ id, etiqueta, Icono, centro }) => {
               const activa = pestana === id;
-              const sesionPendienteHoy = !!(currentWeekData?.plan?.[todayDowIndex]?.paceKey && !currentWeekData?.log?.[todayDowIndex]?.completed && !currentWeekData?.paused);
+              const sesionPendienteHoy = !inicioPendiente && !!(currentWeekData?.plan?.[todayDowIndex]?.paceKey && !currentWeekData?.log?.[todayDowIndex]?.completed && !currentWeekData?.paused);
               const pagoUrgente = ["por_vencer", "vencido"].includes(miPlan.data?.status?.status);
               const punto = (id === "anuncios" && pendientesMuro > 0) || (id === "pagos" && pagoUrgente) || (id === "semana" && sesionPendienteHoy);
               if (centro) {
