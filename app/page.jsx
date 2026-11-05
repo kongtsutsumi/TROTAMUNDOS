@@ -1,7 +1,7 @@
 "use client";
 import { safeGet, safeSet, safeDelete, safeGetWithRetry, updateRosterEntry, fetchRosterSummary, intervalsOp, muroOp, safeGetPersonal, safeSetPersonal, safeDeletePersonal, authStatus, coachSetup, coachLogin, studentList, studentLogin, logout } from "../lib/storage";
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { fusionarLoDelReloj, extrasDelDia, kmAdicionalesDe, paradasDeLaSesion } from "../lib/intervals-read.mjs";
+import { fusionarLoDelReloj, extrasDelDia, kmAdicionalesDe, paradasDeLaSesion, ritmoDeLasRepeticiones } from "../lib/intervals-read.mjs";
 import { textoDelDetalle } from "../lib/estado-semana.mjs";
 import { alertasHabilitadasPorCoach } from "../lib/intervals-icu.mjs";
 import {
@@ -1398,6 +1398,76 @@ function DatoDelReloj({ valor, etiqueta }) {
   );
 }
 
+/* Paso a paso: a cuánto hizo cada paso de una sesión con series. Arriba, siempre a la vista,
+   el ritmo de cada repetición en una línea; al abrir, todos los pasos con su distancia, su
+   tiempo, su ritmo y su pulso, junto a lo planificado. */
+function PasoAPaso({ pa }) {
+  const [ver, setVer] = useState(false);
+  const pasos = Array.isArray(pa?.pasos) ? pa.pasos : [];
+  if (!pasos.length) return null;
+  const reps = pasos.filter((p) => p.trabajo);
+  const promedio = ritmoDeLasRepeticiones(pa);
+  const objetivos = [...new Set(reps.map((p) => p.objetivo?.ritmo).filter(Boolean))];
+  const mono = { fontFamily: "'JetBrains Mono', monospace" };
+  const kmTexto = (km) => (km == null ? "" : km < 1 ? `${Math.round(km * 1000)} m` : `${String(km.toFixed(2)).replace(".", ",")} km`);
+  return (
+    <div className="mt-2 rounded-md px-2.5 py-2" style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}` }}>
+      <div className="text-[11px] font-semibold mb-1" style={{ color: COLORS.textPrimary }}>
+        {pa.coincide ? `Repeticiones (${reps.length})` : `Tramos rápidos (${reps.length} de ${pa.planificadas} planificadas)`}
+      </div>
+      <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-[12px]" style={mono}>
+        {reps.map((p, i) => (
+          <span key={i} style={{ color: COLORS.hard }}>{p.ritmo || "—"}{i < reps.length - 1 && <span style={{ color: COLORS.textMuted }}> ·</span>}</span>
+        ))}
+      </div>
+      {(promedio || objetivos.length > 0) && (
+        <div className="text-[11px] mt-0.5" style={{ color: COLORS.textMuted }}>
+          {promedio && <>Promedio <strong style={{ ...mono, color: COLORS.textPrimary }}>{promedio}</strong>/km</>}
+          {promedio && objetivos.length > 0 && " · "}
+          {objetivos.length > 0 && <>objetivo {objetivos.join(" / ")}/km</>}
+        </div>
+      )}
+      {!pa.coincide && (
+        <div className="text-[11px] mt-1" style={{ color: COLORS.moderate }}>
+          No se reconocieron las {pa.planificadas} repeticiones del plan: se muestran los tramos rápidos que corrió.
+        </div>
+      )}
+      <button type="button" onClick={() => setVer((v) => !v)} className="text-[11px] mt-1 font-semibold" style={{ color: COLORS.track }}>
+        {ver ? "Ocultar paso a paso" : `Ver paso a paso (${pasos.length})`}
+      </button>
+      {ver && (
+        <div className="mt-1">
+          {pasos.map((p, i) => {
+            const detenido = p.segTotal != null && p.seg != null ? p.segTotal - p.seg : 0;
+            return (
+              <div key={i} className="py-1" style={{ borderTop: i ? `1px solid ${COLORS.border}` : "none" }}>
+                <div className="flex items-baseline gap-2 text-[11px]">
+                  <span className="flex-1 min-w-0 truncate" style={{ color: p.trabajo ? COLORS.hard : COLORS.textMuted, fontWeight: p.trabajo ? 600 : 400 }}>{p.nombre}</span>
+                  <span className="shrink-0 text-right" style={{ ...mono, color: COLORS.textMuted }}>{kmTexto(p.km)}{p.segTotal != null ? ` · ${duracionTexto(p.segTotal)}` : ""}</span>
+                  <span className="w-11 shrink-0 text-right" style={{ ...mono, color: COLORS.textPrimary, fontWeight: p.trabajo ? 700 : 400 }}>{p.ritmo || "—"}</span>
+                  <span className="w-14 shrink-0 text-right" style={{ ...mono, color: COLORS.textMuted }}>{p.fc ? `${p.fc} ppm` : ""}</span>
+                </div>
+                {(p.objetivo || detenido >= 10) && (
+                  <div className="text-[10px]" style={{ color: COLORS.textMuted }}>
+                    {p.objetivo && <>plan: {p.objetivo.medida}{p.objetivo.ritmo ? ` a ${p.objetivo.ritmo}/km` : ""}</>}
+                    {p.objetivo && detenido >= 10 && " · "}
+                    {detenido >= 10 && <span style={{ color: COLORS.moderate }}>detenido {duracionTexto(detenido)}</span>}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {pa.origen === "series" && (
+            <div className="text-[10px] mt-1" style={{ color: COLORS.textMuted }}>
+              Calculado con el ritmo segundo a segundo del reloj: los cortes entre pasos pueden variar unos metros.
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DatosDelReloj({ reloj, day, esCoach, titulo = "Del reloj" }) {
   const [verVueltas, setVerVueltas] = useState(false);
   const [verKms, setVerKms] = useState(false);
@@ -1477,6 +1547,9 @@ function DatosDelReloj({ reloj, day, esCoach, titulo = "Del reloj" }) {
         </div>
       )}
 
+      {/* Paso a paso en las sesiones con series: cada repetición y recuperación. */}
+      {reloj.pasos?.pasos?.length > 0 && day && <PasoAPaso pa={reloj.pasos} />}
+
       {/* Kilómetro por kilómetro: ritmo (en movimiento) y frecuencia cardíaca de cada km. */}
       {reloj.kms?.length > 0 && (
         <>
@@ -1512,7 +1585,7 @@ function DatosDelReloj({ reloj, day, esCoach, titulo = "Del reloj" }) {
         </>
       )}
 
-      {esCoach && reloj.vueltas?.length > 0 && (
+      {esCoach && reloj.vueltas?.length > 0 && !reloj.pasos?.pasos?.length && (
         <>
           <button type="button" onClick={() => setVerVueltas((v) => !v)}
             className="text-[11px] mt-1" style={{ color: COLORS.track }}>
