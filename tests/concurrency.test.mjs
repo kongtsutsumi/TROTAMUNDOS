@@ -748,6 +748,23 @@ console.log("\n▸ Calentamiento y enfriamiento libres (LAP en el reloj)");
   check("Alumno: no puede darse el permiso", !permiso.calentamientoLibrePermitido);
 }
 
+console.log("\n▸ Tipo de cada paso en el reloj");
+{
+  const IC = await import("../lib/intervals-icu.mjs");
+  const series = { day: "Mar", slot: "q1", paceKey: "R", km: 9, distOverride: 0.4, repsOverride: 8, easyPace: 6.5, targetPace: 4.0, hmPace: 4.6 };
+  const t = IC.sesionATexto(series, 6.5, {});
+  check("Calentamiento: warmup", /^- Warm-up.* intensity=warmup$/m.test(t), t);
+  check("Repetición: active", /^- Repetición.* intensity=active$/m.test(t), t);
+  check("Recuperación: recover", /^- Recuperación.* intensity=recover$/m.test(t), t);
+  check("Enfriamiento: cooldown", /^- Cool-down.* intensity=cooldown$/m.test(t), t);
+  const rw = IC.sesionATexto({ paceKey: "E", km: 6, runWalk: true, easyPace: 6.5 }, 6.5, {});
+  check("Run/walk: el trote es carrera y la caminata recuperación", /^- Trote.* intensity=active$/m.test(rw) && /^- Caminata.* intensity=recover$/m.test(rw), rw);
+  const fondo = IC.sesionATexto({ paceKey: "long", slot: "long", km: 16, easyPace: 6.5 }, 6.5, {});
+  check("Un fondo continuo no lleva tipo (carrera)", !/intensity=/.test(fondo), fondo);
+  const conAlertas = IC.sesionATexto(series, 6.5, { alertas: true });
+  check("Con alertas, el rango de ritmo sigue en la repetición", /^- Repetición .*\/km Pace intensity=active$/m.test(conAlertas), conAlertas);
+}
+
 console.log("\n" + "─".repeat(52));
 if (failed === 0) {
   console.log(`✓ ${passed} verificaciones, todas correctas.`);

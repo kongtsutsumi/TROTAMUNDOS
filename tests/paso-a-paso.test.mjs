@@ -35,7 +35,9 @@ const dia = { paceKey: "custom", type: "Calidad", km: 11, easyPace: easy, custom
   check(E.formatPace(segs[1].pace) === "4:55", "con su ritmo");
   check(segs[2].label === "Recuperación" && segs[2].type === "time" && segs[2].target === 2, "recuperación de 2'");
   const txt = sesionATexto(dia, easy);
-  check(/\n5x\n- Repetición \(ritmo 4'55\) 1\.2km\n- Recuperación \(ritmo 6'23\) 2m/.test(txt), "al reloj va como 5x 1,2 km con 2' de recuperación");
+  check(/\n5x\n- Repetición \(ritmo 4'55\) 1\.2km intensity=active\n- Recuperación \(ritmo 6'23\) 2m intensity=recover/.test(txt), "al reloj va como 5x 1,2 km con 2' de recuperación");
+  // Cada paso con su tipo en el reloj (si no, Garmin muestra todo como "Carrera").
+  check(/^- Warm-up .* intensity=warmup$/m.test(txt) && /^- Cool-down .* intensity=cooldown$/m.test(txt), "calentamiento y enfriamiento con su tipo");
   check(/- Repetición 1\.2km 5:00-4:50\/km Pace/.test(sesionATexto(dia, easy, { alertas: true })), "con alertas, cada repetición lleva su rango de ritmo");
   const dos = { ...dia, customBlocks: [{ reps: 3, distKm: 1, paceStr: "4:40", recoveryMin: 2 }, { reps: 4, distKm: 0.4, paceStr: "4:20", recoveryMin: 1 }] };
   const t2 = sesionATexto(dos, easy);
@@ -136,6 +138,42 @@ check(!R.llevaPasoAPaso({ paceKey: "long", km: 15 }, 6) && !R.llevaPasoAPaso({ p
   check(R.ubicarActividad({ id: "a2", start_date_local: "2026-11-02T18:00:00" }, new Map(), alumno) === null, "otra salida ese día no la pisa");
   const { log, cambio } = R.logConLectura(alumno.weeks[1].log[0], { id: "a1", km: 11, pasos: { coincide: false, pasos: [] } }, plan[0], 6);
   check(cambio && log.completed && log.reloj.pasos, "se guarda el detalle nuevo sin tocar lo marcado");
+}
+
+// --- La sesión del 05/11: 3 km + 6 x 1 km (I) con 3' + 2 km, corrida desde un Garmin ---
+{
+  const easy2 = E.parsePaceToDecimal("6:16");
+  const intervalos = { paceKey: "I", type: "Intervalos (I)", km: 14, distOverride: 1, repsOverride: 6, easyPace: easy2, hmPace: E.parsePaceToDecimal("4:34"), marathonPace: E.parsePaceToDecimal("4:45") };
+  const plan = R.pasosPlanificados(intervalos, easy2);
+  check(plan.length === 13 && R.pasosComoEnElReloj(plan).length === 14, "el reloj hace 6 recuperaciones (una más que el plan)");
+  // Las 14 vueltas que mostró Garmin: 3 km, 6 x (1 km + 3'), 2 km.
+  const reps = ["4:32", "4:28", "4:28", "4:26", "4:21", "4:12"];
+  const recKm = [0.54, 0.54, 0.56, 0.51, 0.52, 0.53];
+  const vueltas = [{ km: 3.0, seg: 1056, segTotal: 1056, ritmo: "5:52", fc: 135 }];
+  reps.forEach((r, i) => {
+    const sg = Math.round(E.parsePaceToDecimal(r) * 60);
+    vueltas.push({ km: 1.0, seg: sg, segTotal: sg, ritmo: r, fc: 160 + i });
+    vueltas.push({ km: recKm[i], seg: 180, segTotal: 180, ritmo: "5:35", fc: 150 });
+  });
+  vueltas.push({ km: 2.0, seg: 647, segTotal: 647, ritmo: "5:23", fc: 150 });
+  const pa = R.pasoAPaso({ vueltas }, intervalos, easy2);
+  check(pa?.origen === "vueltas" && pa.coincide, "con las 14 vueltas del Garmin se usa el reloj, exacto");
+  const rep = (pa?.pasos || []).filter((x) => x.trabajo);
+  check(rep.length === 6 && rep.map((x) => x.ritmo).join() === reps.join(), `las 6 repeticiones con su ritmo (${rep.map((x) => x.ritmo)})`);
+  check(pa.pasos.filter((x) => /^Recuperación/.test(x.nombre)).length === 6, "6 recuperaciones");
+  check(pa.pasos[0].nombre === "Warm-up" && pa.pasos.at(-1).nombre === "Cool-down", "con calentamiento y enfriamiento");
+  check(R.pasoAPaso({ vueltas: [...vueltas.slice(0, 5), { km: 0.004, seg: 2, segTotal: 2 }, ...vueltas.slice(5)] }, intervalos, easy2)?.origen === "vueltas", "un LAP sin querer (vuelta de 2 s) no lo arruina");
+
+  // Sin vueltas: recuperaciones trotadas a ~5:35 (mucho más rápido que su suave de 6:16) y
+  // un tirón de 300 m en el calentamiento. Antes cada recuperación se partía en pedazos.
+  const tramos = [[seg(1.4, "5:52"), ms("5:52")], [seg(0.3, "5:00"), ms("5:00")], [seg(1.3, "5:52"), ms("5:52")]];
+  reps.forEach((r) => { tramos.push([seg(1, r), ms(r)]); tramos.push([180, ms("5:35")]); });
+  tramos.push([seg(2, "5:25"), ms("5:25")]);
+  const ps = R.pasoAPaso({ streams: salida(tramos, { ruido: 0.35 }) }, intervalos, easy2);
+  const rs = (ps?.pasos || []).filter((x) => x.trabajo);
+  check(ps?.origen === "series" && ps.coincide && rs.length === 6, `con las series: 6 repeticiones (salieron ${rs.length})`);
+  check(rs.every((x, i) => dif(x.ritmo, reps[i]) <= 6 && Math.abs(x.km - 1) <= 0.06), `cada repetición ~1 km a su ritmo (${rs.map((x) => `${x.km}@${x.ritmo}`)})`);
+  check(Math.abs(ps.pasos[0].km - 3) <= 0.08, `el calentamiento entero, con el tirón (${ps.pasos[0].km} km)`);
 }
 
 console.log(`paso a paso: ${ok} ok, ${fail} fallos`);
