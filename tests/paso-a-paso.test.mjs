@@ -126,5 +126,17 @@ check(!R.llevaPasoAPaso({ paceKey: "long", km: 15 }, 6) && !R.llevaPasoAPaso({ p
   check(r.vueltas[0].fc === 151, "vuelta con pulso medio");
 }
 
+
+// --- Salida asignada por fecha en una lectura anterior: se le puede completar el detalle ---
+{
+  const plan = [{ paceKey: "custom", km: 11 }, null, null, null, null, null, null];
+  const alumno = { id: "x", planStartMonday: "2026-11-02", weeks: { 1: { plan, log: [{ completed: true, reloj: { id: "a1", km: 11 } }] } } };
+  const sitio = R.ubicarActividad({ id: "a1", start_date_local: "2026-11-02T06:00:00" }, new Map(), alumno);
+  check(sitio && sitio.semana === 1 && sitio.dia === 0 && sitio.via === "fecha", "la misma salida sigue siendo de su sesión");
+  check(R.ubicarActividad({ id: "a2", start_date_local: "2026-11-02T18:00:00" }, new Map(), alumno) === null, "otra salida ese día no la pisa");
+  const { log, cambio } = R.logConLectura(alumno.weeks[1].log[0], { id: "a1", km: 11, pasos: { coincide: false, pasos: [] } }, plan[0], 6);
+  check(cambio && log.completed && log.reloj.pasos, "se guarda el detalle nuevo sin tocar lo marcado");
+}
+
 console.log(`paso a paso: ${ok} ok, ${fail} fallos`);
 if (fail) process.exit(1);
