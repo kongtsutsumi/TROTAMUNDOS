@@ -1,14 +1,15 @@
 // Vigencia de planes y pagos.
 //
 //  · El alumno solo ve la SUYA: hasta cuándo tiene pagado y su historial.
-//  · El coach ve la de todos, registra pagos (mes a mes), corrige fechas y borra pagos
+//  · Cada coach ve la de SUS alumnos (también el administrador: los pagos de los alumnos de
+//    otro coach son de ese coach), registra pagos (mes a mes), corrige fechas y borra pagos
 //    registrados por error.
 //
 // La identidad sale de la sesión firmada, nunca del navegador.
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
 import { kvGet } from "../../../lib/supabaseAdmin";
-import { verifySessionToken, SESSION_COOKIE } from "../../../lib/session";
+import { sesionDelPedido, entradaDe } from "../../../lib/equipo-servidor";
+import { idCoachDeSesion, esPropio, coachDeEntrada } from "../../../lib/equipo.mjs";
 import {
   asegurarVigenciaInicial, leerAjustes, limpiarAjustes, guardarAjustes,
   leerMembresia, leerTodas, guardarMembresia,
@@ -19,14 +20,9 @@ export const dynamic = "force-dynamic";
 
 const mal = (msg, status = 400) => NextResponse.json({ error: msg }, { status });
 
-async function alumnoExiste(id) {
-  const roster = (await kvGet("roster")) || [];
-  return roster.some((r) => r.id === id);
-}
 
 export async function POST(request) {
-  const store = await cookies();
-  const session = verifySessionToken(store.get(SESSION_COOKIE)?.value);
+  const session = await sesionDelPedido();
   if (!session) return mal("No autorizado", 401);
   let body;
   try { body = await request.json(); } catch (e) { return mal("Petición inválida"); }
@@ -42,7 +38,9 @@ export async function POST(request) {
   // --- Alumno: la suya ---
   if (op === "mia") {
     if (session.role !== "student") return mal("Sin permiso", 403);
-    const [ajustes, m] = await Promise.all([leerAjustes(), leerMembresia(session.studentId)]);
+    // Los ajustes (mensualidad, aviso) son los de SU coach.
+    const coach = coachDeEntrada(await entradaDe(session.studentId));
+    const [ajustes, m] = await Promise.all([leerAjustes(coach), leerMembresia(session.studentId)]);
     return NextResponse.json({
       ok: true,
       membership: m ? {
@@ -56,10 +54,12 @@ export async function POST(request) {
   }
 
   if (session.role !== "coach") return mal("Sin permiso", 403);
+  // Pagos por coach: cada uno ve y registra solo los de sus alumnos (también el administrador).
+  const yo = idCoachDeSesion(session);
 
   if (op === "resumen") {
-    const [ajustes, todas, roster] = await Promise.all([leerAjustes(), leerTodas(), kvGet("roster")]);
-    const ids = new Set((roster || []).map((r) => r.id));
+    const [ajustes, todas, roster] = await Promise.all([leerAjustes(yo), leerTodas(), kvGet("roster")]);
+    const ids = new Set((roster || []).filter((r) => esPropio(session, r)).map((r) => r.id));
     const memberships = {};
     for (const [id, m] of Object.entries(todas)) {
       if (!ids.has(id)) continue;
@@ -71,7 +71,7 @@ export async function POST(request) {
   if (op === "pagar" || op === "fechas" || op === "borrarPago") {
     const { studentId } = body;
     if (typeof studentId !== "string" || !studentId) return mal("Faltan datos");
-    if (!(await alumnoExiste(studentId))) return mal("Alumno no encontrado", 404);
+    if (!esPropio(session, await entradaDe(studentId))) return mal("Alumno no encontrado", 404);
     const actual = (await leerMembresia(studentId)) || { start: null, end: null, payments: [] };
     let nueva;
     try {
@@ -86,15 +86,15 @@ export async function POST(request) {
       return mal(e.message || "Datos inválidos");
     }
     if (!(await guardarMembresia(studentId, nueva))) return mal("No se pudo guardar. Prueba de nuevo.", 500);
-    const ajustes = await leerAjustes();
+    const ajustes = await leerAjustes(yo);
     return NextResponse.json({ ok: true, membership: nueva, status: membershipStatus(nueva, hoy, ajustes.warnDays) });
   }
 
   if (op === "ajustes") {
-    const actuales = await leerAjustes();
+    const actuales = await leerAjustes(yo);
     let nuevos;
     try { nuevos = limpiarAjustes(body.settings || {}, actuales); } catch (e) { return mal(e.message); }
-    return (await guardarAjustes(nuevos)) ? NextResponse.json({ ok: true, settings: nuevos }) : mal("No se pudo guardar. Prueba de nuevo.", 500);
+    return (await guardarAjustes(nuevos, yo)) ? NextResponse.json({ ok: true, settings: nuevos }) : mal("No se pudo guardar. Prueba de nuevo.", 500);
   }
 
   return mal("Operación desconocida");

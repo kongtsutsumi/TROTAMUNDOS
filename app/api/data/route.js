@@ -1,16 +1,25 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
 import { kvGet, kvSet, kvDelete } from "../../../lib/supabaseAdmin";
-import { verifySessionToken, SESSION_COOKIE } from "../../../lib/session";
+import { sesionDelPedido } from "../../../lib/equipo-servidor";
+import * as E from "../../../lib/equipo.mjs";
 import { canRead, canWrite, canDelete, sanitizeForSession } from "../../../lib/permissions";
 import { publishDueWeekFor, sanitizeLocalDate } from "../../../lib/autoPublish";
 import { reenviarSemanasCambiadas, leerAjustesReloj } from "../../../lib/intervals-push";
 import { fusionarAlertas, alertasHabilitadasPorCoach } from "../../../lib/intervals-icu.mjs";
 import { estadoDeLaSemana } from "../../../lib/estado-semana.mjs";
 
-async function getSession() {
-  const store = await cookies();
-  return verifySessionToken(store.get(SESSION_COOKIE)?.value);
+// Un coach adicional solo ve y toca a sus alumnos (ver lib/equipo.mjs). Para decidirlo hace
+// falta el listado guardado: de ahí sale de qué coach es cada alumno.
+async function contextoDelCoach(session, key, op) {
+  const roster = (await kvGet("roster")) || [];
+  const idsPropios = new Set(roster.filter((r) => E.puedeManejar(session, r)).map((r) => r.id));
+  const idsDelListado = new Set(roster.map((r) => r?.id));
+  let existe = false;
+  if (op === "set" && typeof key === "string" && key.startsWith("student:")) {
+    const id = key.slice("student:".length);
+    if (!idsDelListado.has(id)) existe = !!(await kvGet(key));
+  }
+  return { roster, idsPropios, idsDelListado, existe };
 }
 
 // Comprueba que el plan entrante sea el MISMO conjunto de sesiones, solo cambiadas de día.
@@ -50,7 +59,7 @@ function conservarLoDelReloj(incomingLog, storedLog) {
 }
 
 export async function POST(request) {
-  const session = await getSession();
+  const session = await sesionDelPedido();
   if (!session) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
 
   let body;
@@ -60,6 +69,13 @@ export async function POST(request) {
   // no llevan "key" — solo se exige para las que leen o escriben un registro concreto.
   const needsKey = op === "get" || op === "set" || op === "delete";
   if (!op || (needsKey && !key)) return NextResponse.json({ error: "Faltan datos" }, { status: 400 });
+
+  // Coach adicional: solo sus alumnos y las listas filtradas. El administrador, todo.
+  const esCoachAdicional = session.role === "coach" && !E.esAdmin(session);
+  const ctx = session.role === "coach" ? await contextoDelCoach(session, key, op) : null;
+  if (esCoachAdicional && needsKey && !E.clavePermitidaParaCoach(session, op, key, ctx)) {
+    return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
+  }
 
   if (op === "get") {
     if (!canRead(session, key)) return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
@@ -82,6 +98,10 @@ export async function POST(request) {
       }
     }
 
+    if (session.role === "coach") {
+      if (key === "roster") raw = E.filtrarRoster(session, raw);
+      else if (E.LISTAS_POR_ALUMNO.has(key)) raw = E.filtrarLista(session, raw, ctx.idsPropios);
+    }
     return NextResponse.json({ value: sanitizeForSession(session, key, raw) });
   }
 
@@ -128,7 +148,13 @@ export async function POST(request) {
       const alertasAlumno = fusionarAlertas("student", value?.alertasRitmo, current.alertasRitmo);
       if (alertasAlumno) toSave.alertasRitmo = alertasAlumno; else delete toSave.alertasRitmo;
     }
-    if (session.role === "coach") {
+    if (session.role === "coach" && key === "roster") {
+      // De qué coach es cada alumno lo decide el servidor, nunca el navegador. Y un coach
+      // adicional, que solo ve a los suyos, no puede borrar sin querer a los de los demás.
+      toSave = E.fusionarRoster(session, ctx.roster, value);
+    } else if (session.role === "coach" && E.LISTAS_POR_ALUMNO.has(key)) {
+      toSave = E.fusionarLista(session, await kvGet(key), value, ctx.idsPropios);
+    } else if (session.role === "coach") {
       // El coach es dueño del plan, pero NO del registro de sesiones del alumno. Si el alumno
       // marcó algo mientras el coach tenía la pantalla abierta, ese registro se conserva —
       // antes la copia del coach lo pisaba en silencio.
@@ -188,7 +214,7 @@ export async function POST(request) {
     // historial completo de cada alumno para calcular lo mismo — cientos de KB innecesarios
     // y una petición por alumno.
     if (session.role !== "coach") return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
-    const roster = (await kvGet("roster")) || [];
+    const roster = E.filtrarRoster(session, ctx.roster);
     const records = await Promise.all(roster.map((r) => kvGet(`student:${r.id}`)));
     const summary = {};
     const hoy = hoyEnLima();
@@ -253,12 +279,17 @@ export async function POST(request) {
       return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
     }
     const { studentId, patch } = body;
-    if (!studentId || !patch) return NextResponse.json({ error: "Faltan datos" }, { status: 400 });
+    if (!studentId || !patch || typeof patch !== "object") return NextResponse.json({ error: "Faltan datos" }, { status: 400 });
     if (session.role === "student" && session.studentId !== studentId) {
       return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
     }
     const roster = (await kvGet("roster")) || [];
-    const next = roster.map((r) => (r.id === studentId ? { ...r, ...patch } : r));
+    if (session.role === "coach" && !E.puedeManejar(session, roster.find((r) => r?.id === studentId))) {
+      return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
+    }
+    // El coach de un alumno no se cambia por acá.
+    const { coachId: _c, id: _i, ...cambios } = patch;
+    const next = roster.map((r) => (r.id === studentId ? { ...r, ...cambios } : r));
     const ok = await kvSet("roster", next);
     return NextResponse.json({ ok });
   }

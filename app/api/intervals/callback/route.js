@@ -15,6 +15,8 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { kvGet, kvSet } from "../../../../lib/supabaseAdmin";
 import { verifySessionToken, SESSION_COOKIE } from "../../../../lib/session";
+import { sesionVigente, entradaDe } from "../../../../lib/equipo-servidor";
+import { puedeManejar } from "../../../../lib/equipo.mjs";
 import { alumnoDelEstado, canjearCodigo } from "../../../../lib/intervals-oauth";
 
 function volver(origen, estado, detalle) {
@@ -41,8 +43,10 @@ export async function GET(request) {
   const store = await cookies();
   const session = verifySessionToken(store.get(SESSION_COOKIE)?.value);
   if (!session) return volver(origen, "error", "sin-sesion");
-  const autorizado = session.role === "coach"
-    || (session.role === "student" && session.studentId === studentId);
+  const sesion = await sesionVigente(session);
+  if (!sesion) return volver(origen, "error", "sin-sesion");
+  const autorizado = (sesion.role === "coach" && puedeManejar(sesion, await entradaDe(studentId)))
+    || (sesion.role === "student" && sesion.studentId === studentId);
   if (!autorizado) return volver(origen, "error", "sin-permiso");
 
   const canje = await canjearCodigo(code, origen);

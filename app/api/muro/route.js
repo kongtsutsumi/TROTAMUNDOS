@@ -1,7 +1,7 @@
 // El muro de anuncios.
 //
-// Todos los que tienen sesión (el coach y cada alumno) leen el muro completo: es un muro
-// común del grupo. Lo que cambia según quién sea:
+// Cada coach tiene el muro de su grupo: él y sus alumnos lo leen completo, y nadie ve el de
+// otro grupo (ni el administrador). Lo que cambia según quién sea:
 //   · publicar: el coach publica anuncios (con enlace, evento y fijado); un alumno, mensajes
 //     de texto. Esa diferencia la aplica lib/muro.mjs, no esta ruta.
 //   · borrar: el coach, cualquier cosa; un alumno, solo lo suyo.
@@ -10,8 +10,7 @@
 // La identidad nunca viene del navegador: sale de la sesión firmada.
 
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { verifySessionToken, SESSION_COOKIE } from "../../../lib/session";
+import { sesionDelPedido } from "../../../lib/equipo-servidor";
 import { autorDeSesion, verMuro, publicar, responder, borrar, fijar, marcarLeido } from "../../../lib/muro-servidor";
 
 export const dynamic = "force-dynamic";
@@ -24,8 +23,7 @@ function hoyEnLima() {
 const responderJson = (r) => NextResponse.json(r, { status: r?.estado || (r?.ok === false ? 400 : 200) });
 
 export async function POST(request) {
-  const store = await cookies();
-  const session = verifySessionToken(store.get(SESSION_COOKIE)?.value);
+  const session = await sesionDelPedido();
   if (!session) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
 
   const autor = await autorDeSesion(session);

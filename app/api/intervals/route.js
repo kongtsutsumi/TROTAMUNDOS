@@ -11,21 +11,17 @@
 // El testigo de acceso nunca sale del servidor: no se devuelve en ninguna respuesta.
 
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
 import { kvGet } from "../../../lib/supabaseAdmin";
-import { verifySessionToken, SESSION_COOKIE } from "../../../lib/session";
+import { sesionDelPedido, entradaDe } from "../../../lib/equipo-servidor";
+import { puedeManejar } from "../../../lib/equipo.mjs";
 import { enviarSemanaAlReloj, desconectarReloj, estaConectado, leerAjustesReloj } from "../../../lib/intervals-push";
 import { alertasHabilitadasPorCoach, alertasEfectivas } from "../../../lib/intervals-icu.mjs";
 import { traerDelReloj } from "../../../lib/intervals-pull";
 import { urlDeAutorizacion, estaConfigurado } from "../../../lib/intervals-oauth";
 
-async function getSession() {
-  const store = await cookies();
-  return verifySessionToken(store.get(SESSION_COOKIE)?.value);
-}
 
 export async function POST(request) {
-  const session = await getSession();
+  const session = await sesionDelPedido();
   if (!session) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
 
   let body;
@@ -43,7 +39,8 @@ export async function POST(request) {
   if (!op || !studentId) return NextResponse.json({ error: "Faltan datos" }, { status: 400 });
 
   const esElMismoAlumno = session.role === "student" && session.studentId === studentId;
-  const esCoach = session.role === "coach";
+  // "El coach" es el coach de ESTE alumno, o el administrador.
+  const esCoach = session.role === "coach" && puedeManejar(session, await entradaDe(studentId));
 
   const student = await kvGet(`student:${studentId}`);
   if (!student) return NextResponse.json({ error: "Alumno no encontrado" }, { status: 404 });

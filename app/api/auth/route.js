@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { kvGet, kvSet } from "../../../lib/supabaseAdmin";
 import { hashText, genSalt } from "../../../lib/hash";
 import { createSessionToken, SESSION_COOKIE, SESSION_MAX_AGE } from "../../../lib/session";
+import { leerCoaches, sesionDelPedido } from "../../../lib/equipo-servidor";
+import { ADMIN_ID, esAdmin, idCoachDeSesion } from "../../../lib/equipo.mjs";
 
 const COACH_SETUP_CODE = "TROTAMUNDOS-JK";
 
@@ -20,7 +22,22 @@ export async function POST(request) {
   // --- Estado inicial: ¿ya hay contraseña de coach configurada? ---
   if (action === "status") {
     const auth = await kvGet("coachAuth");
-    return NextResponse.json({ coachConfigured: !!auth });
+    // Los nombres de los coaches adicionales, para elegir con cuál entrar. Nada más.
+    const coaches = (await leerCoaches()).map((c) => ({ id: c.id, nombre: c.nombre }));
+    return NextResponse.json({ coachConfigured: !!auth, coaches });
+  }
+
+  // --- Quién soy (para que el panel sepa si es el administrador) ---
+  if (action === "yo") {
+    const session = await sesionDelPedido();
+    if (!session) return NextResponse.json({ role: null });
+    if (session.role !== "coach") return NextResponse.json({ role: session.role, studentId: session.studentId });
+    return NextResponse.json({
+      role: "coach",
+      coachId: idCoachDeSesion(session),
+      admin: esAdmin(session),
+      nombre: esAdmin(session) ? "Administrador" : session.nombre || "Coach",
+    });
   }
 
   // --- Configurar la contraseña del coach por primera vez ---
@@ -32,7 +49,7 @@ export async function POST(request) {
     if (existing) return NextResponse.json({ error: "La contraseña ya fue configurada" }, { status: 409 });
     const salt = genSalt();
     await kvSet("coachAuth", { hash: hashText(password, salt), salt });
-    const token = createSessionToken({ role: "coach" });
+    const token = createSessionToken({ role: "coach", coachId: ADMIN_ID });
     const res = NextResponse.json({ ok: true, role: "coach" });
     res.cookies.set(SESSION_COOKIE, token, sessionCookieOptions());
     return res;
@@ -40,13 +57,24 @@ export async function POST(request) {
 
   // --- Ingreso del coach ---
   if (action === "coachLogin") {
-    const { password } = body;
+    const { password, coachId } = body;
+    // Un coach adicional: su contraseña está en la lista de coaches.
+    if (coachId && coachId !== ADMIN_ID) {
+      const c = (await leerCoaches()).find((x) => x.id === coachId);
+      if (!c || typeof password !== "string" || hashText(password, c.salt) !== c.hash) {
+        return NextResponse.json({ error: "Contraseña incorrecta" }, { status: 401 });
+      }
+      const token = createSessionToken({ role: "coach", coachId: c.id, v: c.v || 1 });
+      const res = NextResponse.json({ ok: true, role: "coach" });
+      res.cookies.set(SESSION_COOKIE, token, sessionCookieOptions());
+      return res;
+    }
     const auth = await kvGet("coachAuth");
     if (!auth) return NextResponse.json({ error: "No hay contraseña configurada" }, { status: 404 });
     if (hashText(password || "", auth.salt) !== auth.hash) {
       return NextResponse.json({ error: "Contraseña incorrecta" }, { status: 401 });
     }
-    const token = createSessionToken({ role: "coach" });
+    const token = createSessionToken({ role: "coach", coachId: ADMIN_ID });
     const res = NextResponse.json({ ok: true, role: "coach" });
     res.cookies.set(SESSION_COOKIE, token, sessionCookieOptions());
     return res;

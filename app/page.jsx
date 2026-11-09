@@ -1,5 +1,5 @@
 "use client";
-import { safeGet, safeSet, safeDelete, safeGetWithRetry, updateRosterEntry, fetchRosterSummary, intervalsOp, muroOp, safeGetPersonal, safeSetPersonal, safeDeletePersonal, authStatus, coachSetup, coachLogin, studentList, studentLogin, logout } from "../lib/storage";
+import { safeGet, safeSet, safeDelete, safeGetWithRetry, updateRosterEntry, fetchRosterSummary, intervalsOp, muroOp, safeGetPersonal, safeSetPersonal, safeDeletePersonal, authStatus, coachSetup, coachLogin, quienSoy, coachesOp, studentList, studentLogin, logout } from "../lib/storage";
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { fusionarLoDelReloj, extrasDelDia, kmAdicionalesDe, paradasDeLaSesion, ritmoDeLasRepeticiones } from "../lib/intervals-read.mjs";
 import { textoDelDetalle } from "../lib/estado-semana.mjs";
@@ -7,9 +7,10 @@ import { alertasHabilitadasPorCoach } from "../lib/intervals-icu.mjs";
 import {
   Users, User, Plus, ArrowLeft, Check, Flag, TrendingUp, TrendingDown,
   Minus, X, ChevronRight, ChevronLeft, ChevronDown, RotateCw, Activity, Search, AlertCircle, Lock, KeyRound,
-  FileText, RefreshCcw, Trash2, BarChart2, Clock, Edit3, Download, QrCode, CalendarDays, Watch, LogOut, Megaphone, Pin, Send, Link2, Home, Wallet, Bell, BellOff
+  FileText, RefreshCcw, Trash2, BarChart2, Clock, Edit3, Download, QrCode, CalendarDays, Watch, LogOut, Megaphone, Pin, Send, Link2, Home, Wallet, Bell, BellOff, UserCog
 } from "lucide-react";
 import { useMyMembership, MembershipCard, PagosAlumno, CobrosPanel, MembershipBadge, useMemberships, statusOf } from "../components/pagos";
+import { PanelCoaches } from "../components/coaches";
 import {
   applyIntermediateRaceDayPatch,
   AUTO_PUBLISH_LABEL,
@@ -2157,8 +2158,16 @@ function CoachGate({ onSuccess, onBack }) {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState("");
+  // Coaches adicionales: si hay, se elige con cuál entrar. "admin" es el administrador.
+  const [coaches, setCoaches] = useState([]);
+  const [coachId, setCoachId] = useState("admin");
 
-  useEffect(() => { authStatus().then((r) => setMode(r.coachConfigured ? "enter" : "set")); }, []);
+  useEffect(() => {
+    authStatus().then((r) => {
+      setCoaches(Array.isArray(r.coaches) ? r.coaches : []);
+      setMode(r.coachConfigured ? "enter" : "set");
+    });
+  }, []);
 
   const verifySetup = () => {
     if (setupCode !== COACH_SETUP_CODE) return setError("Código de configuración incorrecto.");
@@ -2173,7 +2182,7 @@ function CoachGate({ onSuccess, onBack }) {
     else setError(r.error || "No se pudo configurar la contraseña.");
   };
   const handleEnter = async () => {
-    const r = await coachLogin(password);
+    const r = await coachLogin(password, coachId === "admin" ? null : coachId);
     if (r.ok) onSuccess();
     else setError(r.error || "Contraseña incorrecta.");
   };
@@ -2199,6 +2208,18 @@ function CoachGate({ onSuccess, onBack }) {
       )}
       {mode !== "loading" && (mode === "enter" || setupVerified) && (
         <div className="space-y-3">
+          {mode === "enter" && coaches.length > 0 && (
+            <div className="flex flex-wrap gap-2 justify-center" role="radiogroup" aria-label="¿Quién entra?">
+              {[{ id: "admin", nombre: "Administrador" }, ...coaches].map((c) => (
+                <button key={c.id} role="radio" aria-checked={coachId === c.id}
+                  onClick={() => { setCoachId(c.id); setError(""); }}
+                  className="px-3 py-1.5 rounded-full text-sm font-semibold"
+                  style={{ background: coachId === c.id ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
+                  {c.nombre}
+                </button>
+              ))}
+            </div>
+          )}
           <input type="password" placeholder="Contraseña" value={password} onChange={(e) => setPassword(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && (mode === "set" ? handleSet() : handleEnter())}
             className="w-full rounded-lg px-3 py-2.5 text-sm" style={{ background: COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }} />
@@ -3207,7 +3228,9 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
   // El coach necesita el listado COMPLETO (objetivo, nivel, semana, adherencia). La lista que
   // llega desde la pantalla de inicio viene recortada a nombre e id por seguridad, así que
   // aquí se pide el listado real — el servidor ya sabe que hay una sesión de coach válida.
-  const [roster, setRoster] = useState(rosterProp || []);
+  // Empieza vacío: la lista de la pantalla de inicio trae a TODOS los alumnos (solo nombres),
+  // y un coach adicional no debe ver ni un instante a los que no son suyos.
+  const [roster, setRoster] = useState([]);
   const refreshRoster = useCallback(async () => {
     const full = await safeGetWithRetry("roster", 3, 350);
     if (full != null) setRoster(full);
@@ -3251,6 +3274,28 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
   const [pinMsg, setPinMsg] = useState("");
   const [showMuro, setShowMuro] = useState(false);
   const [showPagos, setShowPagos] = useState(false);
+  // Equipo de coaches. "yo": quién entró (el administrador o un coach adicional).
+  const [yo, setYo] = useState(null);
+  const [coachesDelEquipo, setCoachesDelEquipo] = useState([]);
+  const [showCoaches, setShowCoaches] = useState(false);
+  const [coachFilter, setCoachFilter] = useState("");
+  const esAdministrador = !!yo?.admin;
+  const cargarCoaches = useCallback(async () => {
+    const r = await coachesOp("listar");
+    if (r.ok) setCoachesDelEquipo(r.coaches || []);
+  }, []);
+  useEffect(() => {
+    quienSoy().then((r) => {
+      if (r?.role !== "coach") return;
+      setYo(r);
+      if (r.admin) cargarCoaches();
+    });
+  }, [cargarCoaches]);
+  const miCoachId = yo?.coachId || "admin";
+  const coachDe = (r) => r?.coachId || "admin";
+  const nombreCoach = (id) => coachesDelEquipo.find((c) => c.id === id)?.nombre || "Otro coach";
+  // Pagos: cada coach ve solo los de sus alumnos (también el administrador).
+  const rosterPropio = roster.filter((r) => coachDe(r) === miCoachId);
   // Vigencia de todos los alumnos: para el panel de pagos y la insignia del listado.
   const vigencias = useMemberships(true);
   const [pendientesMuro, setPendientesMuro] = useState(0);
@@ -3479,8 +3524,9 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
   const lowAdherenceCount = roster.filter(isLowCompliance).length;
   const pausedCount = roster.filter((r) => r.paused).length;
   // Planes por vencer o vencidos: el número del botón Pagos.
-  const pagosUrgentes = vigencias.loaded ? roster.filter((r) => ["por_vencer", "vencido"].includes(statusOf(vigencias, r.id).status)).length : 0;
+  const pagosUrgentes = vigencias.loaded ? rosterPropio.filter((r) => ["por_vencer", "vencido"].includes(statusOf(vigencias, r.id).status)).length : 0;
   let filteredRoster = search.trim() ? roster.filter((r) => r.name.toLowerCase().includes(search.toLowerCase())) : roster;
+  if (esAdministrador && coachFilter) filteredRoster = filteredRoster.filter((r) => coachDe(r) === coachFilter);
   if (statusFilter === "waiting") filteredRoster = filteredRoster.filter((r) => r.waitingApproval);
   else if (statusFilter === "low") filteredRoster = filteredRoster.filter(isLowCompliance);
   else if (statusFilter === "paused") filteredRoster = filteredRoster.filter((r) => r.paused);
@@ -4684,12 +4730,24 @@ const resetPlan = async () => {
       <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-6">
         <button onClick={onBack} className="p-2 rounded-lg" style={{ color: COLORS.textMuted }}><ArrowLeft size={18} /></button>
         <Users size={20} style={{ color: COLORS.track }} />
-        <h1 className="text-xl font-semibold tracking-wide flex-1 whitespace-nowrap basis-[calc(100%-5rem)] sm:basis-auto" style={{ fontFamily: "'Oswald', sans-serif", color: COLORS.textPrimary }}>PANEL DEL COACH</h1>
-        <button onClick={exportBackup} disabled={busy}
-          className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold"
-          style={{ background: COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
-          <Download size={14} /> Respaldo
-        </button>
+        <h1 className="text-xl font-semibold tracking-wide flex-1 whitespace-nowrap basis-[calc(100%-5rem)] sm:basis-auto" style={{ fontFamily: "'Oswald', sans-serif", color: COLORS.textPrimary }}>
+          PANEL DEL COACH
+          {yo && !esAdministrador && <span className="ml-2 text-sm font-normal" style={{ color: COLORS.textMuted }}>· {yo.nombre}</span>}
+        </h1>
+        {esAdministrador && (
+          <button onClick={exportBackup} disabled={busy}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold"
+            style={{ background: COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
+            <Download size={14} /> Respaldo
+          </button>
+        )}
+        {esAdministrador && (
+          <button onClick={() => setShowCoaches((v) => !v)}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold"
+            style={{ background: showCoaches ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
+            <UserCog size={14} /> Coaches
+          </button>
+        )}
         <button onClick={() => setShowQR((v) => !v)}
           className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold"
           style={{ background: showQR ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
@@ -4735,9 +4793,15 @@ const resetPlan = async () => {
         </button>
       </div>
 
+      {showCoaches && esAdministrador && (
+        <div className="rounded-xl p-4 mb-6" style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}` }}>
+          <PanelCoaches onCambio={() => { cargarCoaches(); refreshRoster(); }} />
+        </div>
+      )}
+
       {showPagos && (
         <div className="mb-6">
-          <CobrosPanel roster={roster} data={vigencias} reload={vigencias.reload} />
+          <CobrosPanel roster={rosterPropio} data={vigencias} reload={vigencias.reload} />
         </div>
       )}
 
@@ -4942,13 +5006,21 @@ const resetPlan = async () => {
                 style={{ background: statusFilter === "paused" ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.track}55` }}>
                 ⏸ {pausedCount} pausados
               </button>
+              {esAdministrador && coachesDelEquipo.length > 0 && (
+                <select value={coachFilter} onChange={(e) => setCoachFilter(e.target.value)} aria-label="Filtrar por coach"
+                  className="px-3 py-1.5 rounded-full text-xs font-semibold" style={{ background: coachFilter ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.track}55` }}>
+                  <option value="">Todos los coaches</option>
+                  <option value="admin">Mis alumnos</option>
+                  {coachesDelEquipo.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                </select>
+              )}
               <select value={goalFilter} onChange={(e) => setGoalFilter(e.target.value)}
                 className="px-3 py-1.5 rounded-full text-xs font-semibold" style={{ background: goalFilter ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.track}55` }}>
                 <option value="">Todos los objetivos</option>
                 {GOALS.map((g) => <option key={g.id} value={g.id}>{g.label}</option>)}
               </select>
-              {(statusFilter || goalFilter) && (
-                <button onClick={() => { setStatusFilter(null); setGoalFilter(""); }} className="text-xs underline" style={{ color: COLORS.textMuted }}>
+              {(statusFilter || goalFilter || coachFilter) && (
+                <button onClick={() => { setStatusFilter(null); setGoalFilter(""); setCoachFilter(""); }} className="text-xs underline" style={{ color: COLORS.textMuted }}>
                   Quitar filtro
                 </button>
               )}
@@ -4985,6 +5057,12 @@ const resetPlan = async () => {
                         <Watch size={14} style={{ color: rosterProgress[r.id].reloj.problema ? COLORS.hard : COLORS.easy }} />
                       </span>
                     )}
+                    {esAdministrador && coachDe(r) !== "admin" && (
+                      <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded shrink-0" title="Alumno de otro coach"
+                        style={{ background: COLORS.surface2, color: COLORS.textMuted, border: `1px solid ${COLORS.border}` }}>
+                        {nombreCoach(coachDe(r))}
+                      </span>
+                    )}
                     {rosterProgress[r.id]?.reloj?.alertas && (
                       <span className="inline-flex shrink-0"
                         title={rosterProgress[r.id].reloj.alumnoLasApago ? "Alertas de ritmo activadas, pero el alumno las apagó" : "Alertas de ritmo activadas"}
@@ -5010,7 +5088,7 @@ const resetPlan = async () => {
                   <EstadoDeLaSemana estado={rosterProgress[r.id]?.estado} />
                 </div>
                 <div className="flex items-center gap-2 shrink-0 ml-2">
-                  {vigencias.loaded && statusOf(vigencias, r.id).status !== "vigente" && <MembershipBadge st={statusOf(vigencias, r.id)} />}
+                  {vigencias.loaded && coachDe(r) === miCoachId && statusOf(vigencias, r.id).status !== "vigente" && <MembershipBadge st={statusOf(vigencias, r.id)} />}
                   {rosterProgress[r.id]?.autoPublished && (
                     <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded" title="La semana se publicó automáticamente y todavía no la revisaste"
                       style={{ background: COLORS.moderate + "22", color: COLORS.moderate, border: `1px solid ${COLORS.moderate}66` }}>
