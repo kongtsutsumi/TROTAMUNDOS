@@ -2210,7 +2210,7 @@ function CoachGate({ onSuccess, onBack }) {
         <div className="space-y-3">
           {mode === "enter" && coaches.length > 0 && (
             <div className="flex flex-wrap gap-2 justify-center" role="radiogroup" aria-label="¿Quién entra?">
-              {[{ id: "admin", nombre: "Administrador" }, ...coaches].map((c) => (
+              {[{ id: "admin", nombre: "Jaime Kong" }, ...coaches].map((c) => (
                 <button key={c.id} role="radio" aria-checked={coachId === c.id}
                   onClick={() => { setCoachId(c.id); setError(""); }}
                   className="px-3 py-1.5 rounded-full text-sm font-semibold"

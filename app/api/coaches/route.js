@@ -39,7 +39,7 @@ export async function POST(request) {
   if (op === "crear") {
     const nombre = E.limpiarNombre(body.nombre);
     if (!nombre) return mal("Escribe el nombre del coach.");
-    if (coaches.some((c) => c.nombre.toLowerCase() === nombre.toLowerCase())) return mal("Ya hay un coach con ese nombre.");
+    if (nombre.toLowerCase() === "jaime kong" || coaches.some((c) => c.nombre.toLowerCase() === nombre.toLowerCase())) return mal("Ya hay un coach con ese nombre.");
     const err = E.validarClave(body.password);
     if (err) return mal(err);
     const salt = genSalt();

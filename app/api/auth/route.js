@@ -36,7 +36,7 @@ export async function POST(request) {
       role: "coach",
       coachId: idCoachDeSesion(session),
       admin: esAdmin(session),
-      nombre: esAdmin(session) ? "Administrador" : session.nombre || "Coach",
+      nombre: esAdmin(session) ? "Jaime Kong" : session.nombre || "Coach",
     });
   }
 

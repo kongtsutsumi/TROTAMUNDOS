@@ -101,7 +101,7 @@ export function PanelCoaches({ onCambio }) {
           <div className="rounded-lg p-3 flex items-center gap-3" style={card}>
             <UserCog size={16} style={{ color: COLORS.track }} />
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-semibold" style={{ color: COLORS.textPrimary }}>Tú · Administrador</div>
+              <div className="text-sm font-semibold" style={{ color: COLORS.textPrimary }}>Tú · Jaime Kong</div>
               <div className="text-xs" style={{ color: COLORS.textMuted }}>{datos.alumnosAdmin} alumno(s) propios · ves a todos</div>
             </div>
           </div>
