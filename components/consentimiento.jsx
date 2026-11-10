@@ -36,8 +36,22 @@ const fechaCorta = (iso) => {
   return Number.isFinite(t) ? new Date(t).toLocaleDateString("es-PE", { day: "numeric", month: "short", year: "numeric" }) : "";
 };
 
+// Aviso propio de cada marca, cuando el acuerdo con ella lo exige. Garmin pide avisar que los
+// entrenamientos se transfieren a Garmin Connect, enlazar su aviso de privacidad y pedir
+// que no conecte quien tenga restringido subir esos datos a su cuenta.
+const AVISO_DE_MARCA = {
+  garmin: (
+    <>
+      Tus entrenamientos se enviarán a tu cuenta de Garmin Connect, que los trata según su{" "}
+      <a href="https://www.garmin.com/privacy/connect" target="_blank" rel="noopener noreferrer" className="underline" style={{ color: COLORS.track }}>aviso de privacidad</a>.
+      Si tienes alguna restricción para subir datos a tu cuenta de Garmin Connect, no la conectes.
+    </>
+  ),
+};
+
 // Antes de conectar. onConectar se llama solo después de guardar el consentimiento.
-export function ConsentimientoAntesDeConectar({ studentId, ocupado, onConectar }) {
+//   marca: "garmin", "coros"… (o nada para intervals.icu) — agrega el aviso que esa marca pida.
+export function ConsentimientoAntesDeConectar({ studentId, ocupado, onConectar, marca = null }) {
   const [entrenamiento, setEntrenamiento] = useState(false);
   const [salud, setSalud] = useState(false);
   const [guardando, setGuardando] = useState(false);
@@ -59,6 +73,9 @@ export function ConsentimientoAntesDeConectar({ studentId, ocupado, onConectar }
       <Casilla checked={salud} onChange={setSalud} disabled={!entrenamiento} testid="consent-salud">
         {TEXTO_SALUD}
       </Casilla>
+      {AVISO_DE_MARCA[marca] && (
+        <p className="text-xs mb-2.5" style={{ color: COLORS.textMuted }} data-testid="aviso-marca">{AVISO_DE_MARCA[marca]}</p>
+      )}
       <p className="text-xs mb-3" style={{ color: COLORS.textMuted }}>
         Puedes retirar cualquiera de los dos cuando quieras desde esta pantalla. Detalles en la <Politica />.
       </p>

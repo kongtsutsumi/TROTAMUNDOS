@@ -7,19 +7,20 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "node tests/check-imports.mjs && node tests/plan-engine.test.mjs && node tests/concurrency.test.mjs && node tests/intervals-read.test.mjs && node tests/muro.test.mjs && node tests/estado-semana.test.mjs && node tests/vigencia.test.mjs && node tests/motor2.test.mjs && node tests/paso-a-paso.test.mjs && node tests/equipo.test.mjs && node tests/consentimiento.test.mjs"
+    "test": "node tests/check-imports.mjs && node tests/plan-engine.test.mjs && node tests/concurrency.test.mjs && node tests/intervals-read.test.mjs && node tests/muro.test.mjs && node tests/estado-semana.test.mjs && node tests/vigencia.test.mjs && node tests/motor2.test.mjs && node tests/paso-a-paso.test.mjs && node tests/equipo.test.mjs && node tests/consentimiento.test.mjs && node tests/fit-actividad.test.mjs && node tests/garmin.test.mjs"
   },
   "dependencies": {
+    "@garmin/fitsdk": "21.218.0",
+    "@supabase/supabase-js": "^2.45.4",
+    "lucide-react": "^0.383.0",
     "next": "14.2.15",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "@supabase/supabase-js": "^2.45.4",
-    "lucide-react": "^0.383.0"
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "autoprefixer": "^10.4.19",
+    "eslint": "^8.57.0",
     "postcss": "^8.4.38",
-    "tailwindcss": "^3.4.4",
-    "eslint": "^8.57.0"
+    "tailwindcss": "^3.4.4"
   }
 }

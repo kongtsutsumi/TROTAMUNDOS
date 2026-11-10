@@ -19,6 +19,7 @@ import { alertasHabilitadasPorCoach, alertasEfectivas } from "../../../lib/inter
 import { traerDelReloj } from "../../../lib/intervals-pull";
 import { urlDeAutorizacion, estaConfigurado } from "../../../lib/intervals-oauth";
 import { leerConsentimiento, alDesconectar } from "../../../lib/salud-servidor";
+import { estaConectadoGarmin } from "../../../lib/garmin-servidor";
 import { aceptoEntrenamiento, resumen as resumenConsentimiento } from "../../../lib/consentimiento.mjs";
 
 
@@ -84,6 +85,10 @@ export async function POST(request) {
     if (!esCoach && !esElMismoAlumno) return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
     if (!estaConfigurado()) {
       return NextResponse.json({ error: "La conexión con intervals.icu no está configurada" }, { status: 503 });
+    }
+    // Con Garmin directo conectado, intervals.icu duplicaría los entrenamientos en el reloj.
+    if (await estaConectadoGarmin(studentId)) {
+      return NextResponse.json({ error: "Primero desconecta Garmin", motivo: "garmin-conectado" }, { status: 409 });
     }
     // Sin el consentimiento expreso del alumno para sus datos de entrenamiento no se conecta
     // nada (política de privacidad, sección 3). Lo da el alumno en la app, antes de esto.
