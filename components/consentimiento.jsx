@@ -61,7 +61,11 @@ export function ConsentimientoAntesDeConectar({ studentId, ocupado, onConectar, 
     setGuardando(true); setError("");
     const r = await consentimientoOp("guardar", studentId, { entrenamiento: true, salud });
     setGuardando(false);
-    if (!r.ok) return setError(r.error || "No se pudo guardar tu consentimiento.");
+    if (!r.ok) {
+      return setError(/Solo tú/.test(r.error || "")
+        ? "Esta pantalla está abierta con otra sesión (por ejemplo, la del coach). Sal y vuelve a entrar con el nombre y el PIN del alumno."
+        : r.error || "No se pudo guardar tu consentimiento.");
+    }
     onConectar();
   };
 
@@ -102,7 +106,11 @@ export function PermisosDelReloj({ studentId, consentimiento, onCambio }) {
     setOcupado(true); setError(""); setAviso("");
     const r = await consentimientoOp("guardar", studentId, cambios);
     setOcupado(false); setConfirmarRetiro(false);
-    if (!r.ok) return setError(r.error || "No se pudo guardar.");
+    if (!r.ok) {
+      return setError(/Solo tú/.test(r.error || "")
+        ? "Esta pantalla está abierta con otra sesión (por ejemplo, la del coach). Sal y vuelve a entrar con el nombre y el PIN del alumno."
+        : r.error || "No se pudo guardar.");
+    }
     setAviso(mensaje);
     await onCambio?.();
   };

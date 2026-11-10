@@ -6328,9 +6328,15 @@ export default function App() {
       await refreshRoster();
       const remembered = await safeGetPersonal("rememberedStudent");
       if (remembered && remembered.id) {
-        // solo entra directo si la sesión guardada en el servidor sigue siendo válida
-        const record = await safeGet(`student:${remembered.id}`);
-        if (record) { setAuthedStudentId(remembered.id); setView("student"); }
+        // Solo entra directo si la sesión abierta en el servidor es la de ESE alumno. Antes
+        // bastaba con poder leer su ficha, y con la sesión del coach (que lee todas) se abría
+        // el portal del alumno con la sesión del coach: lo que el alumno hace por sí mismo
+        // —como dar su consentimiento— fallaba sin que se entendiera por qué.
+        const yo = await quienSoy();
+        if (yo?.role === "student" && yo.studentId === remembered.id) {
+          const record = await safeGet(`student:${remembered.id}`);
+          if (record) { setAuthedStudentId(remembered.id); setView("student"); }
+        }
       }
       setLoading(false);
     })();
