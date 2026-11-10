@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { useMyMembership, MembershipCard, PagosAlumno, CobrosPanel, MembershipBadge, useMemberships, statusOf } from "../components/pagos";
 import { PanelCoaches } from "../components/coaches";
+import { ConsentimientoAntesDeConectar, PermisosDelReloj } from "../components/consentimiento";
 import {
   applyIntermediateRaceDayPatch,
   AUTO_PUBLISH_LABEL,
@@ -5168,6 +5169,10 @@ function ConexionReloj({ student, onCambio, onLectura, onAlertas }) {
     setOcupado(true);
     const r = await intervalsOp("autorizar", student.id);
     if (r?.url) { window.location.href = r.url; return; }
+    if (r?.motivo === "Falta tu consentimiento para conectar el reloj") {
+      setAviso({ estado: "error", motivo: "primero confirma tus permisos" });
+      await cargar(); setOcupado(false); return;
+    }
     setAviso({ estado: "error", motivo: r?.motivo || "no-disponible" });
     setOcupado(false);
   };
@@ -5227,6 +5232,7 @@ function ConexionReloj({ student, onCambio, onLectura, onAlertas }) {
                 : ` El último envío no salió (${estado.ultimoEnvio.motivo}) — avísale a tu coach si no te aparecen.`
             )}
           </p>
+          <PermisosDelReloj studentId={student.id} consentimiento={estado.consentimiento} onCambio={cargar} />
           {estado.alertas?.habilitadas && (
             <div className="rounded-lg p-3 mb-3" style={{ background: COLORS.bg, border: `1px solid ${COLORS.border}` }}>
               <label className="flex items-center justify-between gap-3 cursor-pointer">
@@ -5259,7 +5265,7 @@ function ConexionReloj({ student, onCambio, onLectura, onAlertas }) {
           {confirmarCorte ? (
             <div className="flex flex-wrap gap-2 items-center">
               <span className="text-xs" style={{ color: COLORS.textMuted }}>
-                Se quitarán del calendario los entrenamientos futuros. Lo ya entrenado no se toca.
+                Se quitarán del calendario los entrenamientos futuros y se borrarán tus datos de salud. Lo ya entrenado no se toca.
               </span>
               <button onClick={desconectar} disabled={ocupado} className="px-3 py-1.5 rounded text-xs font-semibold"
                 style={{ background: COLORS.hard, color: COLORS.lane }}>Sí, desconectar</button>
@@ -5282,10 +5288,7 @@ function ConexionReloj({ student, onCambio, onLectura, onAlertas }) {
             Se piden tres permisos: escribir los entrenamientos en tu calendario, leer las
             actividades que completas y poner tu ritmo umbral (para las alertas de ritmo). Nada más.
           </p>
-          <button onClick={conectar} disabled={ocupado} className="px-4 py-2 rounded-lg text-sm font-semibold"
-            style={{ background: COLORS.track, color: COLORS.lane }}>
-            {ocupado ? "Abriendo…" : "Conectar mi reloj"}
-          </button>
+          <ConsentimientoAntesDeConectar studentId={student.id} ocupado={ocupado} onConectar={conectar} />
         </>
       )}
     </div>

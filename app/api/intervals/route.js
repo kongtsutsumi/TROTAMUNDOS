@@ -18,6 +18,8 @@ import { enviarSemanaAlReloj, desconectarReloj, estaConectado, leerAjustesReloj 
 import { alertasHabilitadasPorCoach, alertasEfectivas } from "../../../lib/intervals-icu.mjs";
 import { traerDelReloj } from "../../../lib/intervals-pull";
 import { urlDeAutorizacion, estaConfigurado } from "../../../lib/intervals-oauth";
+import { leerConsentimiento, alDesconectar } from "../../../lib/salud-servidor";
+import { aceptoEntrenamiento, resumen as resumenConsentimiento } from "../../../lib/consentimiento.mjs";
 
 
 export async function POST(request) {
@@ -56,6 +58,8 @@ export async function POST(request) {
       conectadoEl: student.intervals?.conectadoEl ?? null,
       ultimoEnvio: student.intervals?.ultimoEnvio ?? null,
       ultimaLectura: student.intervals?.ultimaLectura ?? null,
+      // Qué aceptó el alumno (entrenamiento y salud, por separado) y cuándo.
+      consentimiento: resumenConsentimiento(await leerConsentimiento(studentId)),
       errorDeLectura: student.intervals?.errorDeLectura ?? null,
       // Alertas de ritmo: si el coach las habilitó (el alumno solo puede tocarlas entonces),
       // si están activas, y si intervals.icu necesita que el alumno vuelva a conectar.
@@ -80,6 +84,11 @@ export async function POST(request) {
     if (!esCoach && !esElMismoAlumno) return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
     if (!estaConfigurado()) {
       return NextResponse.json({ error: "La conexión con intervals.icu no está configurada" }, { status: 503 });
+    }
+    // Sin el consentimiento expreso del alumno para sus datos de entrenamiento no se conecta
+    // nada (política de privacidad, sección 3). Lo da el alumno en la app, antes de esto.
+    if (!aceptoEntrenamiento(await leerConsentimiento(studentId))) {
+      return NextResponse.json({ error: "Falta tu consentimiento para conectar el reloj", motivo: "sin-consentimiento" }, { status: 409 });
     }
     const url = urlDeAutorizacion(studentId, new URL(request.url).origin);
     return NextResponse.json({ ok: true, url });
@@ -112,7 +121,9 @@ export async function POST(request) {
   if (op === "desconectar") {
     if (!esCoach && !esElMismoAlumno) return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
     const r = await desconectarReloj(student);
-    return NextResponse.json(r);
+    // Desconectar retira el consentimiento y borra sus datos de salud.
+    const salud = await alDesconectar(studentId);
+    return NextResponse.json({ ...r, saludBorrada: salud.borrados || 0 });
   }
 
   return NextResponse.json({ error: "Operación desconocida" }, { status: 400 });

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { kvGet, kvSet, kvDelete } from "../../../lib/supabaseAdmin";
 import { sesionDelPedido } from "../../../lib/equipo-servidor";
+import { alBorrarAlumno } from "../../../lib/salud-servidor";
 import * as E from "../../../lib/equipo.mjs";
 import { canRead, canWrite, canDelete, sanitizeForSession } from "../../../lib/permissions";
 import { publishDueWeekFor, sanitizeLocalDate } from "../../../lib/autoPublish";
@@ -69,6 +70,12 @@ export async function POST(request) {
   // no llevan "key" — solo se exige para las que leen o escriben un registro concreto.
   const needsKey = op === "get" || op === "set" || op === "delete";
   if (!op || (needsKey && !key)) return NextResponse.json({ error: "Faltan datos" }, { status: 400 });
+
+  // El consentimiento del alumno solo se toca por /api/consentimiento, donde solo él puede
+  // darlo o retirarlo. Por acá nadie lo lee ni lo escribe, ni siquiera el administrador.
+  if (needsKey && typeof key === "string" && key.startsWith("consentimiento:")) {
+    return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
+  }
 
   // Coach adicional: solo sus alumnos y las listas filtradas. El administrador, todo.
   const esCoachAdicional = session.role === "coach" && !E.esAdmin(session);
@@ -297,6 +304,8 @@ export async function POST(request) {
   if (op === "delete") {
     if (!canDelete(session, key)) return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
     const ok = await kvDelete(key);
+    // Al borrar a un alumno se van también su consentimiento y sus datos de salud.
+    if (ok && key.startsWith("student:")) await alBorrarAlumno(key.slice("student:".length));
     return NextResponse.json({ ok });
   }
 
