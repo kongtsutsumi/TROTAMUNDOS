@@ -11,6 +11,7 @@ import { kvGet } from "../../../lib/supabaseAdmin";
 import { sesionDelPedido, entradaDe } from "../../../lib/equipo-servidor";
 import { puedeManejar } from "../../../lib/equipo.mjs";
 import { estaConectado as intervalsConectado } from "../../../lib/intervals-push";
+import { estaConectadoCoros } from "../../../lib/coros-servidor";
 import { estaConfigurado, estaConectadoGarmin, urlDeAutorizacion, enviarSemanaAGarmin, desconectarGarmin } from "../../../lib/garmin-servidor";
 import { leerConsentimiento } from "../../../lib/salud-servidor";
 import { aceptoEntrenamiento, resumen as resumenConsentimiento } from "../../../lib/consentimiento.mjs";
@@ -50,6 +51,7 @@ export async function POST(request) {
   if (op === "autorizar") {
     if (!estaConfigurado()) return mal("La conexión con Garmin no está configurada", 503);
     if (intervalsConectado(student)) return mal("Primero desconecta intervals.icu", 409, { motivo: "intervals-conectado" });
+    if (await estaConectadoCoros(studentId)) return mal("Primero desconecta COROS", 409, { motivo: "coros-conectado" });
     if (!aceptoEntrenamiento(await leerConsentimiento(studentId))) return mal("Falta tu consentimiento para conectar el reloj", 409, { motivo: "sin-consentimiento" });
     const url = await urlDeAutorizacion(studentId, new URL(request.url).origin);
     return url ? NextResponse.json({ ok: true, url }) : mal("No se pudo iniciar la conexión", 500);

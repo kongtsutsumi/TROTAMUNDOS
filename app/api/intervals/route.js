@@ -20,6 +20,7 @@ import { traerDelReloj } from "../../../lib/intervals-pull";
 import { urlDeAutorizacion, estaConfigurado } from "../../../lib/intervals-oauth";
 import { leerConsentimiento, alDesconectar } from "../../../lib/salud-servidor";
 import { estaConectadoGarmin } from "../../../lib/garmin-servidor";
+import { estaConectadoCoros, traerDeCoros } from "../../../lib/coros-servidor";
 import { aceptoEntrenamiento, resumen as resumenConsentimiento } from "../../../lib/consentimiento.mjs";
 
 
@@ -90,6 +91,9 @@ export async function POST(request) {
     if (await estaConectadoGarmin(studentId)) {
       return NextResponse.json({ error: "Primero desconecta Garmin", motivo: "garmin-conectado" }, { status: 409 });
     }
+    if (await estaConectadoCoros(studentId)) {
+      return NextResponse.json({ error: "Primero desconecta COROS", motivo: "coros-conectado" }, { status: 409 });
+    }
     // Sin el consentimiento expreso del alumno para sus datos de entrenamiento no se conecta
     // nada (política de privacidad, sección 3). Lo da el alumno en la app, antes de esto.
     if (!aceptoEntrenamiento(await leerConsentimiento(studentId))) {
@@ -118,6 +122,10 @@ export async function POST(request) {
   // servicio sin querer.
   if (op === "traer") {
     if (!esCoach && !esElMismoAlumno) return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
+    // Con COROS conectado, lo entrenado viene de COROS (que no avisa: hay que preguntarle).
+    if (await estaConectadoCoros(studentId)) {
+      return NextResponse.json(await traerDeCoros(student, { minutosEntreLecturas: body?.forzar === true ? 1 : 15 }));
+    }
     const r = await traerDelReloj(student, { minutosEntreLecturas: body?.forzar === true ? 1 : 15 });
     return NextResponse.json(r);
   }

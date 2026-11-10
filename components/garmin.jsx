@@ -33,7 +33,7 @@ export function ConexionGarmin({ student, estado, onCambio }) {
         Tus entrenamientos llegan a tu calendario de Garmin Connect: sincroniza tu reloj para tenerlos. Lo que corres vuelve
         solo a la app cuando sincronizas.
         {envio && (envio.ok
-          ? ` Último envío: semana ${envio.semana}, ${envio.enviados} sesión${envio.enviados === 1 ? "" : "es"} (${fecha(envio.fecha)}).`
+          ? ` Último envío: semana ${envio.semana}, ${envio.enviados} sesi${envio.enviados === 1 ? "ón" : "ones"} (${fecha(envio.fecha)}).`
           : ` El último envío no salió (${envio.motivo}). Avísale a tu coach si no te aparecen.`)}
       </p>
       <PermisosDelReloj studentId={student.id} consentimiento={estado?.consentimiento} onCambio={onCambio} />

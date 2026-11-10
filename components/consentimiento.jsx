@@ -47,6 +47,14 @@ const AVISO_DE_MARCA = {
       Si tienes alguna restricción para subir datos a tu cuenta de Garmin Connect, no la conectes.
     </>
   ),
+  coros: (
+    <>
+      Entrarás con tu cuenta de COROS en la página de COROS: TROTAMUNDOS nunca ve tu contraseña. Tus entrenamientos
+      se guardarán en tu calendario de COROS, que los trata según su{" "}
+      <a href="https://www.coros.com/privacy" target="_blank" rel="noopener noreferrer" className="underline" style={{ color: COLORS.track }}>política de privacidad</a>.
+      COROS no deja que otras apps borren entrenamientos: si tu coach quita una sesión, te avisaremos para que la borres en la app COROS.
+    </>
+  ),
 };
 
 // Antes de conectar. onConectar se llama solo después de guardar el consentimiento.

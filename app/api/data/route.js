@@ -3,6 +3,7 @@ import { kvGet, kvSet, kvDelete } from "../../../lib/supabaseAdmin";
 import { sesionDelPedido } from "../../../lib/equipo-servidor";
 import { alBorrarAlumno } from "../../../lib/salud-servidor";
 import { reenviarGarminCambiadas, desconectarGarmin } from "../../../lib/garmin-servidor";
+import { reenviarCorosCambiadas, desconectarCoros } from "../../../lib/coros-servidor";
 import * as E from "../../../lib/equipo.mjs";
 import { canRead, canWrite, canDelete, sanitizeForSession } from "../../../lib/permissions";
 import { publishDueWeekFor, sanitizeLocalDate } from "../../../lib/autoPublish";
@@ -73,9 +74,9 @@ export async function POST(request) {
   if (!op || (needsKey && !key)) return NextResponse.json({ error: "Faltan datos" }, { status: 400 });
 
   // El consentimiento del alumno solo se toca por /api/consentimiento, donde solo él puede
-  // darlo o retirarlo, y las filas de Garmin (testigos de acceso) son solo del servidor. Por
-  // acá nadie las lee ni las escribe, ni siquiera el administrador.
-  if (needsKey && typeof key === "string" && (key.startsWith("consentimiento:") || key.startsWith("garmin:"))) {
+  // darlo o retirarlo, y las filas de Garmin y COROS (testigos de acceso) son solo del servidor.
+  // Por acá nadie las lee ni las escribe, ni siquiera el administrador.
+  if (needsKey && typeof key === "string" && (key.startsWith("consentimiento:") || key.startsWith("garmin:") || key.startsWith("coros:"))) {
     return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
   }
 
@@ -194,9 +195,10 @@ export async function POST(request) {
       // puede ser de antes de eso, y al guardar la borraría —o resucitaría una cortada—.
       // Siempre manda la guardada.
       if (current && typeof key === "string" && key.startsWith("student:") && toSave && typeof toSave === "object") {
-        const { intervals: _delNavegador, garmin: _garminNavegador, ...resto } = toSave;
+        const { intervals: _delNavegador, garmin: _garminNavegador, coros: _corosNavegador, ...resto } = toSave;
         toSave = current.intervals ? { ...resto, intervals: current.intervals } : resto;
         if (current.garmin) toSave.garmin = current.garmin; // lo mismo con Garmin directo
+        if (current.coros) toSave.coros = current.coros;    // y con COROS
         // Alertas de ritmo: el coach cambia su llave; la preferencia del alumno se conserva.
         const alertasCoach = fusionarAlertas("coach", value?.alertasRitmo, current.alertasRitmo);
         if (alertasCoach) toSave.alertasRitmo = alertasCoach; else delete toSave.alertasRitmo;
@@ -209,12 +211,15 @@ export async function POST(request) {
     let reloj = null;
     if (ok && previo && typeof key === "string" && key.startsWith("student:")) {
       try {
-        const [r, g] = await Promise.all([
+        const [r, g, c] = await Promise.all([
           reenviarSemanasCambiadas(previo, toSave, { hoy: hoyEnLima() }),
           reenviarGarminCambiadas(previo, toSave, { hoy: hoyEnLima() }),
+          reenviarCorosCambiadas(previo, toSave, { hoy: hoyEnLima() }),
         ]);
         if (r.semanas.length) reloj = { semanas: r.semanas, ok: r.ok };
-        if (g.semanas.length) reloj = { semanas: [...new Set([...(reloj?.semanas || []), ...g.semanas])], ok: (reloj?.ok ?? true) && g.ok };
+        for (const x of [g, c]) {
+          if (x.semanas.length) reloj = { semanas: [...new Set([...(reloj?.semanas || []), ...x.semanas])], ok: (reloj?.ok ?? true) && x.ok };
+        }
       } catch (e) {
         console.error("no se pudo reenviar al reloj después de guardar", e);
       }
@@ -264,13 +269,15 @@ export async function POST(request) {
         autoPublished: !!week?.autoPublished,
         // Solo para quien tiene el reloj conectado. "problema" si intervals.icu ya no acepta
         // el permiso o el último envío no salió: el coach lo ve en el listado sin entrar.
-        reloj: (s.intervals?.token || s.intervals?.pruebaConClaveDelCoach || s.garmin?.conectado)
+        reloj: (s.intervals?.token || s.intervals?.pruebaConClaveDelCoach || s.garmin?.conectado || s.coros?.conectado)
           ? {
-              marca: s.garmin?.conectado ? "garmin" : "intervals",
+              marca: s.garmin?.conectado ? "garmin" : s.coros?.conectado ? "coros" : "intervals",
               problema: s.garmin?.conectado
                 ? s.garmin?.ultimoEnvio?.ok === false
-                : s.intervals?.errorDeLectura === "permiso-revocado" || s.intervals?.ultimoEnvio?.ok === false,
-              ultimoEnvio: (s.garmin?.conectado ? s.garmin?.ultimoEnvio?.fecha : s.intervals?.ultimoEnvio?.fecha) ?? null,
+                : s.coros?.conectado
+                  ? s.coros?.ultimoEnvio?.ok === false || !!s.coros?.errorDeLectura
+                  : s.intervals?.errorDeLectura === "permiso-revocado" || s.intervals?.ultimoEnvio?.ok === false,
+              ultimoEnvio: (s.garmin?.conectado ? s.garmin?.ultimoEnvio?.fecha : s.coros?.conectado ? s.coros?.ultimoEnvio?.fecha : s.intervals?.ultimoEnvio?.fecha) ?? null,
               // Alertas de ritmo: si el coach se las activó, y si el alumno las apagó.
               alertas: alertasHabilitadasPorCoach(s, alertasGeneral),
               alumnoLasApago: s.alertasRitmo?.alumno === false,
@@ -318,6 +325,7 @@ export async function POST(request) {
     if (ok && key.startsWith("student:")) {
       const id = key.slice("student:".length);
       await desconectarGarmin(id).catch(() => null);
+      await desconectarCoros(id).catch(() => null);
       await alBorrarAlumno(id);
     }
     return NextResponse.json({ ok });

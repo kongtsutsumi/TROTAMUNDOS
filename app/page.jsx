@@ -1,5 +1,5 @@
 "use client";
-import { safeGet, safeSet, safeDelete, safeGetWithRetry, updateRosterEntry, fetchRosterSummary, intervalsOp, muroOp, safeGetPersonal, safeSetPersonal, safeDeletePersonal, authStatus, coachSetup, coachLogin, quienSoy, coachesOp, garminOp, studentList, studentLogin, logout } from "../lib/storage";
+import { safeGet, safeSet, safeDelete, safeGetWithRetry, updateRosterEntry, fetchRosterSummary, intervalsOp, muroOp, safeGetPersonal, safeSetPersonal, safeDeletePersonal, authStatus, coachSetup, coachLogin, quienSoy, coachesOp, garminOp, corosOp, studentList, studentLogin, logout } from "../lib/storage";
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { fusionarLoDelReloj, extrasDelDia, kmAdicionalesDe, paradasDeLaSesion, ritmoDeLasRepeticiones } from "../lib/intervals-read.mjs";
 import { textoDelDetalle } from "../lib/estado-semana.mjs";
@@ -13,6 +13,7 @@ import { useMyMembership, MembershipCard, PagosAlumno, CobrosPanel, MembershipBa
 import { PanelCoaches } from "../components/coaches";
 import { ConsentimientoAntesDeConectar, PermisosDelReloj } from "../components/consentimiento";
 import { ConexionGarmin } from "../components/garmin";
+import { ConexionCoros } from "../components/coros";
 import {
   applyIntermediateRaceDayPatch,
   AUTO_PUBLISH_LABEL,
@@ -1638,7 +1639,7 @@ function SalidasAdicionales({ extras, esCoach }) {
   );
 }
 
-const relojConectado = (s) => !!(s?.intervals?.conectado || s?.intervals?.token || s?.intervals?.pruebaConClaveDelCoach || s?.garmin?.conectado);
+const relojConectado = (s) => !!(s?.intervals?.conectado || s?.intervals?.token || s?.intervals?.pruebaConClaveDelCoach || s?.garmin?.conectado || s?.coros?.conectado);
 // El interruptor de calentamiento y enfriamiento libres de una sesión, si corresponde mostrarlo.
 function lapLibrePara(student, day, onToggle) {
   if (!student?.calentamientoLibrePermitido || !relojConectado(student) || !admiteCalentamientoLibre(day)) return undefined;
@@ -3759,7 +3760,9 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
     setEnvioReloj(null);
     const r = student.garmin?.conectado
       ? await garminOp("enviar", student.id, { weekNum })
-      : await intervalsOp("enviar", student.id, { weekNum });
+      : student.coros?.conectado
+        ? await corosOp("enviar", student.id, { weekNum })
+        : await intervalsOp("enviar", student.id, { weekNum });
     setEnvioReloj(r);
     setEnviandoReloj(false);
     if (r?.ok) setTimeout(() => setEnvioReloj(null), 6000);
@@ -5124,24 +5127,30 @@ const resetPlan = async () => {
 /* Conectar el reloj del alumno con intervals.icu.
    Es opcional y reversible: sin esto la app funciona igual. Se dice de forma explícita qué
    se va a hacer con el permiso, porque el alumno está autorizando acceso a su cuenta. */
-// Elige la conexión: Garmin directo si está conectado; si no, la de intervals.icu (que
-// también ofrece Garmin directo al conectar, cuando está disponible).
+// Elige la conexión: Garmin o COROS directos si están conectados; si no, la de intervals.icu
+// (que al conectar también ofrece Garmin y COROS directos, cuando están disponibles).
 function ConexionReloj(props) {
-  const { student, onCambio } = props;
+  const { student, onCambio, onLectura } = props;
   const [garmin, setGarmin] = useState(null);
-  const cargarGarmin = useCallback(async () => {
+  const [coros, setCoros] = useState(null);
+  const cargarMarcas = useCallback(async () => {
     if (!student?.id) return;
-    setGarmin(await garminOp("estado", student.id));
+    const [g, c] = await Promise.all([garminOp("estado", student.id), corosOp("estado", student.id)]);
+    setGarmin(g); setCoros(c);
   }, [student?.id]);
-  useEffect(() => { cargarGarmin(); }, [cargarGarmin]);
-  if (!garmin) return <p className="text-sm" style={{ color: COLORS.textMuted }}>Consultando tu reloj…</p>;
+  useEffect(() => { cargarMarcas(); }, [cargarMarcas]);
+  if (!garmin || !coros) return <p className="text-sm" style={{ color: COLORS.textMuted }}>Consultando tu reloj…</p>;
   if (garmin.conectado) {
-    return <ConexionGarmin student={student} estado={garmin} onCambio={async () => { await cargarGarmin(); await onCambio?.(); }} />;
+    return <ConexionGarmin student={student} estado={garmin} onCambio={async () => { await cargarMarcas(); await onCambio?.(); }} />;
   }
-  return <ConexionIntervals {...props} garminDisponible={!!garmin.disponible} />;
+  if (coros.conectado) {
+    return <ConexionCoros student={student} estado={coros} onLectura={onLectura}
+      onCambio={async () => { await cargarMarcas(); await onCambio?.(); }} />;
+  }
+  return <ConexionIntervals {...props} garminDisponible={!!garmin.disponible} corosDisponible={!!coros.disponible} />;
 }
 
-function ConexionIntervals({ student, onCambio, onLectura, onAlertas, garminDisponible = false }) {
+function ConexionIntervals({ student, onCambio, onLectura, onAlertas, garminDisponible = false, corosDisponible = false }) {
   const [estado, setEstado] = useState(null);
   const [marca, setMarca] = useState(garminDisponible ? "garmin" : "otra");
   const [ocupado, setOcupado] = useState(false);
@@ -5175,7 +5184,7 @@ function ConexionIntervals({ student, onCambio, onLectura, onAlertas, garminDisp
   if (!estado) {
     return <p className="text-sm" style={{ color: COLORS.textMuted }}>Consultando tu reloj…</p>;
   }
-  if (!estado.disponible && !estado.conectado && !garminDisponible) {
+  if (!estado.disponible && !estado.conectado && !garminDisponible && !corosDisponible) {
     return (
       <div className="rounded-xl p-4" style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}` }}>
         <p className="text-sm" style={{ color: COLORS.textMuted }}>
@@ -5189,6 +5198,13 @@ function ConexionIntervals({ student, onCambio, onLectura, onAlertas, garminDisp
   const conectarGarmin = async () => {
     setOcupado(true);
     const r = await garminOp("autorizar", student.id);
+    if (r?.url) { window.location.href = r.url; return; }
+    setAviso({ estado: "error", motivo: r?.error || r?.motivo || "no-disponible" });
+    setOcupado(false);
+  };
+  const conectarCoros = async () => {
+    setOcupado(true);
+    const r = await corosOp("autorizar", student.id);
     if (r?.url) { window.location.href = r.url; return; }
     setAviso({ estado: "error", motivo: r?.error || r?.motivo || "no-disponible" });
     setOcupado(false);
@@ -5211,7 +5227,7 @@ function ConexionIntervals({ student, onCambio, onLectura, onAlertas, garminDisp
     setAvisoLectura(null);
     const r = await intervalsOp("traer", student.id, { forzar: true });
     if (r?.actualizadas || r?.extras) {
-      setAvisoLectura(`Listo: ${r.actualizadas} sesión${r.actualizadas === 1 ? "" : "es"} al día.`);
+      setAvisoLectura(`Listo: ${r.actualizadas} sesi${r.actualizadas === 1 ? "ón" : "ones"} al día.`);
       await onLectura?.();
     } else if (r?.motivo === "permiso-revocado") {
       setAvisoLectura("intervals.icu ya no acepta el permiso. Vuelve a conectar tu reloj.");
@@ -5308,9 +5324,9 @@ function ConexionIntervals({ student, onCambio, onLectura, onAlertas, garminDisp
         </>
       ) : (
         <>
-          {garminDisponible && (
-            <div className="flex gap-2 mb-3" role="radiogroup" aria-label="Marca de tu reloj">
-              {[["garmin", "Garmin"], ["otra", "Otra marca"]].map(([id, txt]) => (
+          {(garminDisponible || corosDisponible) && (
+            <div className="flex flex-wrap gap-2 mb-3" role="radiogroup" aria-label="Marca de tu reloj">
+              {[["garmin", "Garmin", garminDisponible], ["coros", "COROS", corosDisponible], ["otra", "Otra marca", true]].filter((x) => x[2]).map(([id, txt]) => (
                 <button key={id} role="radio" aria-checked={marca === id} onClick={() => setMarca(id)} data-testid={`marca-${id}`}
                   className="px-3 py-1.5 rounded-full text-xs font-semibold"
                   style={{ background: marca === id ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
@@ -5327,10 +5343,18 @@ function ConexionIntervals({ student, onCambio, onLectura, onAlertas, garminDisp
               </p>
               <ConsentimientoAntesDeConectar studentId={student.id} ocupado={ocupado} onConectar={conectarGarmin} marca="garmin" />
             </>
+          ) : marca === "coros" && corosDisponible ? (
+            <>
+              <p className="text-sm mb-2" style={{ color: COLORS.textMuted }}>
+                Conecta tu cuenta de COROS: los entrenamientos que arma tu coach te aparecen en tu calendario de COROS, con sus
+                ritmos, y lo que corres vuelve a la app. Es opcional y lo puedes cortar cuando quieras.
+              </p>
+              <ConsentimientoAntesDeConectar studentId={student.id} ocupado={ocupado} onConectar={conectarCoros} marca="coros" />
+            </>
           ) : (
             <>
               <p className="text-sm mb-2" style={{ color: COLORS.textMuted }}>
-                Si conectas tu cuenta de intervals.icu (COROS, Polar, Suunto, Wahoo y otras), los entrenamientos que arma tu
+                Si conectas tu cuenta de intervals.icu (Polar, Suunto, Wahoo, Apple Watch y otras), los entrenamientos que arma tu
                 coach te aparecen solos en el reloj, con sus ritmos. Es opcional y lo puedes cortar cuando quieras.
               </p>
               <p className="text-xs mb-3" style={{ color: COLORS.textMuted }}>

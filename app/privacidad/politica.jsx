@@ -13,7 +13,7 @@ const C = {
   track: "#C8452E", lane: "#F5F3EA", muted: "#8B93A3",
 };
 
-export const ACTUALIZADO = { es: "10 de noviembre de 2026", en: "November 10, 2026" };
+export const ACTUALIZADO = { es: "11 de noviembre de 2026", en: "November 11, 2026" };
 const CONTACTO = "admin@trotamundos.pe";
 const EMPRESA = {
   razon: "Trotamundos S.A.C.",
@@ -77,7 +77,7 @@ const TEXTO = {
           "Diseñar tu plan y ajustarlo según cómo vienes respondiendo.",
           "Comparar lo que corriste con lo planificado (paso a paso y kilómetro a kilómetro).",
           "Enviar tus entrenamientos a tu reloj.",
-          "Preparar reportes diarios de recuperación (sueño, VFC, frecuencia cardíaca en reposo, energía) para ti y para tu coach, y avisarle si tus indicadores sugieren bajar la carga.",
+          "Preparar reportes diarios de recuperación (sueño, VFC, frecuencia cardíaca en reposo, energía) para ti y para tu coach, y avisarle si tus indicadores sugieren bajar la carga. Esos reportes son solo para tu entrenamiento y rendimiento deportivo: no son un diagnóstico ni un consejo médico.",
           "Llevar tu historial y el control de tu membresía.",
         ]} />
         <P>La aplicación puede <B>sugerir</B> ajustes, pero las decisiones sobre tu entrenamiento las toma siempre una persona: tu coach. No se toman decisiones automatizadas que te afecten sin intervención humana.</P>
@@ -101,7 +101,7 @@ const TEXTO = {
       ["7. Cuánto tiempo se conservan", <>
         <Lista items={[
           "Mientras entrenes con TROTAMUNDOS, porque tu historial es parte de tu progresión.",
-          <>Si <B>desconectas un dispositivo</B>, dejamos de recibir sus datos de inmediato. Los datos de salud recibidos de ese dispositivo se eliminan dentro de los 30 días siguientes. Tus actividades quedan en tu historial de entrenamiento, salvo que pidas borrarlas.</>,
+          <>Si <B>desconectas un dispositivo</B>, dejamos de recibir sus datos de inmediato. Los datos de salud recibidos de ese dispositivo se eliminan dentro de los 30 días siguientes. Tus actividades quedan en tu historial de entrenamiento, salvo que pidas borrarlas. Si la marca lo exige, lo hacemos antes: con <B>COROS</B>, al desconectar (o al retirar el permiso desde la app de COROS) borramos dentro de las 24 horas el detalle que vino de COROS (vueltas, kilómetro a kilómetro, frecuencia cardíaca, modelo del reloj) y en tu historial queda solo lo básico de cada sesión (que la hiciste, distancia, tiempo y ritmo).</>,
           "Si dejas de entrenar y pides que se borre tu cuenta, eliminamos tus datos dentro de los 30 días siguientes, salvo los registros de pagos que la ley obligue a conservar.",
         ]} />
       </>],
@@ -163,7 +163,7 @@ const TEXTO = {
           "To design your plan and adjust it to how you are responding.",
           "To compare what you ran with what was planned (step by step and kilometre by kilometre).",
           "To send your workouts to your watch.",
-          "To prepare daily recovery reports (sleep, HRV, resting heart rate, energy) for you and your coach, and to alert your coach when your indicators suggest reducing the load.",
+          "To prepare daily recovery reports (sleep, HRV, resting heart rate, energy) for you and your coach, and to alert your coach when your indicators suggest reducing the load. These reports are for fitness and performance purposes only: they are not a diagnosis or medical advice.",
           "To keep your history and track your membership.",
         ]} />
         <P>The app may <B>suggest</B> adjustments, but decisions about your training are always made by a person: your coach. No automated decisions affecting you are made without human involvement.</P>
@@ -187,7 +187,7 @@ const TEXTO = {
       ["7. How long we keep it", <>
         <Lista items={[
           "While you train with TROTAMUNDOS, because your history is part of your progression.",
-          <>If you <B>disconnect a device</B>, we stop receiving its data immediately. Health data received from that device is deleted within 30 days. Your activities remain in your training history unless you ask us to delete them.</>,
+          <>If you <B>disconnect a device</B>, we stop receiving its data immediately. Health data received from that device is deleted within 30 days. Your activities remain in your training history unless you ask us to delete them. Where a brand requires it, we do it sooner: with <B>COROS</B>, when you disconnect (or revoke access from the COROS app) we delete within 24 hours the detail that came from COROS (laps, kilometre splits, heart rate, watch model), and your history keeps only the basics of each session (that you did it, distance, time and pace).</>,
           "If you stop training and ask us to delete your account, we delete your data within 30 days, except payment records we are legally required to keep.",
         ]} />
       </>],
