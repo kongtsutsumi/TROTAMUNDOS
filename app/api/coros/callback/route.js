@@ -1,8 +1,14 @@
-// Vuelta del alumno desde COROS después de autorizar.
+// Vuelta del alumno después de autorizar en COROS.
 //
-// Igual que con Garmin, antes de guardar nada se comprueba que el viaje sea nuestro (el "state"
-// guardado al salir, de un solo uso y con 15 minutos de vida) y que quien vuelve sea ese alumno o
-// su coach. El testigo de COROS nunca pasa por el navegador.
+// Lo que prueba que el viaje es legítimo es el "state": lo crea el servidor cuando el propio
+// alumno (o su coach) aprieta "Conectar", es secreto, de un solo uso y vive 15 minutos. El
+// testigo de la marca nunca pasa por el navegador.
+//
+// La vuelta NO exige la sesión del navegador: en el celular la autorización suele terminar en
+// otro lugar que donde empezó (la app de la marca abre la vuelta en Safari, no en la app
+// TROTAMUNDOS instalada en la pantalla de inicio, que guarda su sesión aparte; o en navegación
+// privada). Exigirla dejaba al alumno en un bucle. Si SÍ hay una sesión y es de otra persona,
+// se rechaza. Sin sesión, se completa y se muestra /reloj-conectado.
 import { NextResponse } from "next/server";
 import { sesionDelPedido, entradaDe } from "../../../../lib/equipo-servidor";
 import { puedeManejar } from "../../../../lib/equipo.mjs";
@@ -11,8 +17,8 @@ import { alumnoDelViaje, completarConexion } from "../../../../lib/coros-servido
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
-function volver(origen, estado, detalle) {
-  const url = new URL("/", origen);
+function volver(origen, estado, detalle, { conSesion = true } = {}) {
+  const url = new URL(conSesion ? "/" : "/reloj-conectado", origen);
   url.searchParams.set("reloj", estado);
   url.searchParams.set("marca", "coros");
   if (detalle) url.searchParams.set("motivo", detalle);
@@ -24,17 +30,20 @@ export async function GET(request) {
   const origen = url.origin;
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
-  if (url.searchParams.get("error")) return volver(origen, "cancelado");
-  if (!code || !state) return volver(origen, "error", "faltan-datos");
+  // Sin sesión en este navegador, los avisos van a la página /reloj-conectado.
+  const haySesion = !!(await sesionDelPedido());
+  if (url.searchParams.get("error")) return volver(origen, "cancelado", null, { conSesion: haySesion });
+  if (!code || !state) return volver(origen, "error", "faltan-datos", { conSesion: haySesion });
 
   const studentId = await alumnoDelViaje(state);
-  if (!studentId) return volver(origen, "error", "enlace-caducado");
+  if (!studentId) return volver(origen, "error", "enlace-caducado", { conSesion: haySesion });
   const sesion = await sesionDelPedido();
-  if (!sesion) return volver(origen, "error", "sin-sesion");
-  const autorizado = (sesion.role === "coach" && puedeManejar(sesion, await entradaDe(studentId)))
-    || (sesion.role === "student" && sesion.studentId === studentId);
-  if (!autorizado) return volver(origen, "error", "sin-permiso");
-
+  if (sesion) {
+    const autorizado = (sesion.role === "coach" && puedeManejar(sesion, await entradaDe(studentId)))
+      || (sesion.role === "student" && sesion.studentId === studentId);
+    if (!autorizado) return volver(origen, "error", "sin-permiso", { conSesion: false });
+  }
+  const conSesion = !!sesion;
   const r = await completarConexion({ state, code, origen });
-  return r.ok ? volver(origen, "conectado") : volver(origen, "error", r.motivo);
+  return r.ok ? volver(origen, "conectado", null, { conSesion }) : volver(origen, "error", r.motivo, { conSesion });
 }

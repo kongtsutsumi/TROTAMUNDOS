@@ -5161,6 +5161,20 @@ function ConexionReloj(props) {
     setGarmin(g); setCoros(c);
   }, [student?.id]);
   useEffect(() => { cargarMarcas(); }, [cargarMarcas]);
+  // Al autorizar en el celular, la vuelta suele terminar en Safari y no en esta app (sobre todo
+  // si está instalada en la pantalla de inicio). Cuando el alumno regresa a la app, se vuelve a
+  // consultar el estado: así ve su reloj conectado sin quedarse en "Abriendo…".
+  const [vuelta, setVuelta] = useState(0);
+  useEffect(() => {
+    const alVolver = async () => {
+      if (document.visibilityState !== "visible") return;
+      setVuelta((n) => n + 1);
+      await cargarMarcas();
+      await onCambio?.();
+    };
+    document.addEventListener("visibilitychange", alVolver);
+    return () => document.removeEventListener("visibilitychange", alVolver);
+  }, [cargarMarcas, onCambio]);
   if (!garmin || !coros) return <p className="text-sm" style={{ color: COLORS.textMuted }}>Consultando tu reloj…</p>;
   if (garmin.conectado) {
     return <ConexionGarmin student={student} estado={garmin} onCambio={async () => { await cargarMarcas(); await onCambio?.(); }} />;
@@ -5169,7 +5183,7 @@ function ConexionReloj(props) {
     return <ConexionCoros student={student} estado={coros} onLectura={onLectura}
       onCambio={async () => { await cargarMarcas(); await onCambio?.(); }} />;
   }
-  return <ConexionIntervals {...props} garminDisponible={!!garmin.disponible} corosDisponible={!!coros.disponible} />;
+  return <ConexionIntervals key={vuelta} {...props} garminDisponible={!!garmin.disponible} corosDisponible={!!coros.disponible} />;
 }
 
 function ConexionIntervals({ student, onCambio, onLectura, onAlertas, garminDisponible = false, corosDisponible = false }) {
