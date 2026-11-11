@@ -11,7 +11,7 @@ import { sesionDelPedido, entradaDe } from "../../../lib/equipo-servidor";
 import { puedeManejar } from "../../../lib/equipo.mjs";
 import { estaConectado as intervalsConectado } from "../../../lib/intervals-push";
 import { estaConectadoGarmin } from "../../../lib/garmin-servidor";
-import { estaDisponible, estaConectadoCoros, corregirModelo, urlDeAutorizacion, enviarSemanaACoros, traerDeCoros, desconectarCoros } from "../../../lib/coros-servidor";
+import { estaDisponible, estaConectadoCoros, corregirModelo, urlDeAutorizacion, enviarSemanaACoros, traerDeCoros, desconectarCoros, diagnosticoDeSalud } from "../../../lib/coros-servidor";
 import { leerConsentimiento } from "../../../lib/salud-servidor";
 import { aceptoEntrenamiento, resumen as resumenConsentimiento } from "../../../lib/consentimiento.mjs";
 
@@ -69,6 +69,10 @@ export async function POST(request) {
 
   if (op === "traer") {
     return NextResponse.json(await traerDeCoros(student, { forzar: body?.forzar === true }));
+  }
+
+  if (op === "diagnostico") {
+    return NextResponse.json(await diagnosticoDeSalud(studentId));
   }
 
   if (op === "desconectar") {

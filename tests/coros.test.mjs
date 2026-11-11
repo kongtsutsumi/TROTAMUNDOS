@@ -176,6 +176,9 @@ Sleep detail for this day is not available yet`;
   const todo = C.saludDesdeCoros({ sueño, vfc: "2026-10-15\nHRV Avg: 50 ms", reposo: "2026-10-15: 60 bpm", diario: "2026-10-15\nSteps: 9000" });
   check("Se junta por día", todo["2026-10-15"]?.sueñoMin === 477 && todo["2026-10-15"]?.vfc === 50 && todo["2026-10-15"]?.fcReposo === 60 && todo["2026-10-15"]?.pasos === 9000, JSON.stringify(todo));
   check("Nada que leer", Object.keys(C.saludDesdeCoros({})).length === 0);
+  const compacta = C.reposoDeCoros("Resting HR\n20261022: 66 bpm\nDate: 2026/10/23 - 64 bpm");
+  check("Fechas en otros formatos", compacta["2026-10-22"]?.fcReposo === 66 && compacta["2026-10-23"]?.fcReposo === 64, JSON.stringify(compacta));
+  check("Máscara del diagnóstico", C.enmascarar("HRV Avg: 48 ms on 2026-11-10") === "HRV Avg: ## ms on ####-##-##");
 }
 
 console.log("▸ Al desconectar: fuera el detalle de COROS");

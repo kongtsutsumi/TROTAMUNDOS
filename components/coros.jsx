@@ -22,6 +22,8 @@ export function ConexionCoros({ student, estado, onCambio, onLectura }) {
   const [confirmar, setConfirmar] = useState(false);
   const [trayendo, setTrayendo] = useState(false);
   const [aviso, setAviso] = useState(null);
+  const [diag, setDiag] = useState(null);
+  const revisar = async () => { setDiag({ cargando: true }); setDiag(await corosOp("diagnostico", student.id)); };
 
   const desconectar = async () => {
     setOcupado(true);
@@ -82,6 +84,30 @@ export function ConexionCoros({ student, estado, onCambio, onLectura }) {
           <RefreshCcw size={11} /> {trayendo ? "Buscando…" : "Traer lo que entrené"}
         </button>
         {aviso && <span className="text-xs" style={{ color: COLORS.textMuted }}>{aviso}</span>}
+      </div>
+      <div className="mb-2">
+        <button type="button" onClick={revisar} className="underline text-[11px]" style={{ color: COLORS.textMuted }} data-testid="coros-diagnostico">
+          Revisar la conexión de salud
+        </button>
+        {diag && (
+          <div className="mt-2 rounded-lg p-2.5 text-[11px]" style={{ background: COLORS.bg, border: `1px solid ${COLORS.border}`, color: COLORS.textMuted }}>
+            {diag.cargando ? "Revisando…" : !diag.ok ? `No se pudo revisar (${diag.motivo || diag.error || "error"}).` : (
+              <>
+                <div className="mb-1.5">Permiso de salud: <b style={{ color: COLORS.textPrimary }}>{diag.consentimientoSalud ? "sí" : "no"}</b>
+                  {" · "}historial cargado: <b style={{ color: COLORS.textPrimary }}>{diag.historialSalud ? "sí" : "no"}</b></div>
+                {diag.consultas.map((c) => (
+                  <details key={c.consulta} className="mb-1">
+                    <summary style={{ color: c.ok && c.diasLeidos ? COLORS.easy : COLORS.moderate }}>
+                      {c.consulta}: {c.ok ? `${c.diasLeidos} día${c.diasLeidos === 1 ? "" : "s"} leído${c.diasLeidos === 1 ? "" : "s"}` : `sin respuesta (${c.estado})`}
+                    </summary>
+                    <pre className="whitespace-pre-wrap mt-1" style={{ fontSize: 10 }}>{c.formato || "(vacío)"}</pre>
+                  </details>
+                ))}
+                <div className="mt-1">Los números aparecen como # para no mostrar tus datos.</div>
+              </>
+            )}
+          </div>
+        )}
       </div>
       <p className="text-[11px] mb-2" style={{ color: COLORS.textMuted }}>Datos de actividad y salud proporcionados por COROS. Solo con fines de entrenamiento y rendimiento; no son consejo médico.</p>
       {confirmar ? (

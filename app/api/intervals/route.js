@@ -23,6 +23,9 @@ import { estaConectadoGarmin } from "../../../lib/garmin-servidor";
 import { estaConectadoCoros, traerDeCoros } from "../../../lib/coros-servidor";
 import { aceptoEntrenamiento, resumen as resumenConsentimiento } from "../../../lib/consentimiento.mjs";
 
+// Traer de COROS puede incluir, la primera vez, 4 semanas de datos de salud.
+export const maxDuration = 60;
+
 
 export async function POST(request) {
   const session = await sesionDelPedido();
