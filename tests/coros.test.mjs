@@ -181,6 +181,24 @@ Sleep detail for this day is not available yet`;
   check("Máscara del diagnóstico", C.enmascarar("HRV Avg: 48 ms on 2026-11-10") === "HRV Avg: ## ms on ####-##-##");
 }
 
+console.log("▸ Salud con el formato real (cadena JSON con \\n)");
+{
+  // Formatos reales de COROS MCP (cuenta real, nov 2026), con números inventados.
+  const REAL_SUEÑO = JSON.stringify("Sleep Overview\n========================\nNote: each record below is dated by its wake-up day.\n\n2026-11-09\nSleep Score: 82\nDaily Sleep: 7h 25min (incl. naps)\nMain Sleep (asleep): 7h 5min\nMain Sleep Period (incl. awake): 7h 20min\nSleep metrics scope: daily\nDeep Sleep Ratio: 21%\nLight Sleep Ratio: 50%\nREM Ratio: 25%\nAwake Ratio: 4%\nAwake Time: 9 min\nAwake Count (>3 min): 2\nMain Sleep Window: 2026-11-08 23:40 - 2026-11-09 07:00\nNaps Total (asleep): 20 min\nNaps Period (incl. awake): 22 min\nNap Window: 2026-11-09 14:10 - 2026-11-09 14:32\n\n2026-11-10\nSleep Score: 88\nDaily Sleep: 7h 50min (incl. naps)\nMain Sleep (asleep): 7h 50min\nAwake Time: 4 min");
+  const REAL_VFC = JSON.stringify("Sleep HRV — 2026-11-08 to 2026-11-10\n========================\nNote: dates are wake-up days (each value comes from the night that ended that morning).\n\nHRV Assessment — Last 3 days\n========================\n\n2026-11-08:\n  HRV Avg: 44 ms — Normal\n  Normal Range: 40 — 55 ms\n  Baseline: 48 ms\n2026-11-09:\n  HRV Avg: 39 ms — Normal\n  Normal Range: 40 — 55 ms\n  Baseline: 48 ms\n2026-11-10:\n  HRV Avg: 51 ms — Normal\n  Normal Range: 40 — 55 ms\n  Baseline: 48 ms\n\nSleep HRV Time Series — Last 1 days\n========================\n\n2026-11-10:\n  timestamp=1762750000, timezone=-20, hrv=62");
+  const REAL_REPOSO = JSON.stringify("Resting Heart Rate — Last 3 days\n========================\n\n2026-11-08: 49 bpm\n2026-11-09: 52 bpm\n2026-11-10: 48 bpm");
+  const REAL_DIARIO = JSON.stringify("Daily Health Data — Last 2 days | Resting HR: 48 bpm | HRV Baseline: 48 ms\nNote: sleep entries are dated by their wake-up day.\n\n--- 20261109 ---\nSteps: 12,345 | Calories: 2,310 kcal | Exercise: 1h 05min\nStress: Avg 31\nSleep Summary:\n  Total: 7h 25min | Deep: 1h 30min | Light: 3h 40min | REM: 1h 50min | Awake: 9 min\n  Sleep HR: Avg 52 bpm | Min 45 bpm | Max 70 bpm\n\n--- 20261110 ---\nSteps: 4,210 | Calories: 980 kcal | Exercise: 25 min\nStress: Avg 22\nSleep Summary:\n  Total: 7h 50min | Deep: 1h 5min | Light: 4h 1min | REM: 2h 10min | Awake: 4 min\n  Sleep HR: Avg 50 bpm | Min 44 bpm | Max 66 bpm");
+  const todo = C.saludDesdeCoros({ sueño: C.textoDe(texto(REAL_SUEÑO)), vfc: C.textoDe(texto(REAL_VFC)), reposo: C.textoDe(texto(REAL_REPOSO)), diario: C.textoDe(texto(REAL_DIARIO)) });
+  const d9 = todo["2026-11-09"], d10 = todo["2026-11-10"];
+  check("Texto entre comillas se desarma", C.textoDe(texto(REAL_REPOSO)).startsWith("Resting Heart Rate") && C.textoDe(texto(REAL_REPOSO)).includes("\n"));
+  check("Sueño real", d9?.sueñoMin === 425 && d9?.sueñoPuntaje === 82 && d9?.despiertoMin === 9 && d10?.sueñoMin === 470, JSON.stringify(d9));
+  check("VFC real (el promedio, no la serie)", d9?.vfc === 39 && d10?.vfc === 51 && todo["2026-11-08"]?.vfc === 44, JSON.stringify(todo));
+  check("FC en reposo real", d9?.fcReposo === 52 && d10?.fcReposo === 48);
+  check("Diario real: pasos, calorías, estrés y fases", d9?.pasos === 12345 && d9?.calorias === 2310 && d9?.estres === 31 && d9?.sueñoProfundoMin === 90 && d9?.sueñoLigeroMin === 220 && d9?.sueñoRemMin === 110, JSON.stringify(d9));
+  check("La FC durante el sueño no se confunde con la de reposo", d10?.fcReposo === 48);
+  check("Solo tres días", Object.keys(todo).length === 3);
+}
+
 console.log("▸ Al desconectar: fuera el detalle de COROS");
 {
   const reloj = { id: "coros-1", fuente: "coros", fecha: "2026-11-09T07:00:00", km: 11, min: 58, ritmo: "5:17", fcMedia: 150, vueltas: [{}], kms: [{}], pasos: {}, dispositivo: "COROS PACE 4 · datos de COROS" };

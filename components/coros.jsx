@@ -98,7 +98,9 @@ export function ConexionCoros({ student, estado, onCambio, onLectura }) {
                 {diag.consultas.map((c) => (
                   <details key={c.consulta} className="mb-1">
                     <summary style={{ color: c.ok && c.diasLeidos ? COLORS.easy : COLORS.moderate }}>
-                      {c.consulta}: {c.ok ? `${c.diasLeidos} día${c.diasLeidos === 1 ? "" : "s"} leído${c.diasLeidos === 1 ? "" : "s"}` : `sin respuesta (${c.estado})`}
+                      {c.consulta}: {!c.ok ? `sin respuesta (${c.estado})` : c.consulta === "querySportRecords"
+                        ? `${c.diasLeidos} actividad${c.diasLeidos === 1 ? "" : "es"} leída${c.diasLeidos === 1 ? "" : "s"}`
+                        : `${c.diasLeidos} día${c.diasLeidos === 1 ? "" : "s"} leído${c.diasLeidos === 1 ? "" : "s"}`}
                     </summary>
                     <pre className="whitespace-pre-wrap mt-1" style={{ fontSize: 10 }}>{c.formato || "(vacío)"}</pre>
                   </details>
