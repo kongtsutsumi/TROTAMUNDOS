@@ -14,7 +14,7 @@ import { PanelCoaches } from "../components/coaches";
 import { ConsentimientoAntesDeConectar, PermisosDelReloj } from "../components/consentimiento";
 import { ConexionGarmin } from "../components/garmin";
 import { ConexionCoros } from "../components/coros";
-import { SaludAlumno, ResumenSalud, SaludCoach, PuntoSalud, useSalud, useSaludEquipo } from "../components/salud";
+import { SaludAlumno, ResumenSalud, SaludCoach, PuntoSalud, useSalud, useSaludEquipo, ResumenEquipo } from "../components/salud";
 import {
   applyIntermediateRaceDayPatch,
   AUTO_PUBLISH_LABEL,
@@ -5051,6 +5051,7 @@ const resetPlan = async () => {
             </div>
           )}
 
+          <ResumenEquipo onElegir={(id) => { setSelectedId(id); setTimeout(() => document.getElementById(`alumno-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 50); }} />
           <div className="relative mb-3">
             <Search size={16} style={{ position: "absolute", left: 12, top: 12, color: COLORS.textMuted }} />
             <input type="text" placeholder="Busca un alumno por nombre" value={search} onChange={(e) => setSearch(e.target.value)}

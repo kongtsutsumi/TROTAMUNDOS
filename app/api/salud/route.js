@@ -21,8 +21,10 @@ import { leerSalud, leerConsentimiento } from "../../../lib/salud-servidor";
 import { aceptoSalud } from "../../../lib/consentimiento.mjs";
 import { porDia, evaluarDia, ultimoDiaConDatos } from "../../../lib/recuperacion.mjs";
 import { compartiendoSalud } from "../../../lib/garmin.mjs";
+import { resumenSemanal, gruposDelEquipo } from "../../../lib/rendimiento.mjs";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 const mal = (error, status = 400) => NextResponse.json({ ok: false, error }, { status });
 const saludGarminActiva = () => process.env.SALUD_GARMIN !== "pausada";
@@ -94,6 +96,31 @@ export async function POST(request) {
       if (e.banda) alumnos[id] = { banda: e.banda, puntaje: e.puntaje, fecha };
     }
     return NextResponse.json({ ok: true, alumnos });
+  }
+
+  // Resumen de la semana del equipo (solo coach): quién asimila bien, quién está sobrecargado,
+  // quién durmió mal y quién subió su VDOT.
+  if (op === "semana") {
+    if (session.role !== "coach") return mal("Sin permiso", 403);
+    const roster = filtrarRoster(session, (await kvGet("roster")) || []);
+    const ids = roster.map((r) => r?.id).filter((id) => typeof id === "string");
+    const hoy = hoyEnLima();
+    const porAlumno = {};
+    if (ids.length) {
+      const { data } = await supabaseAdmin.from("salud_diaria").select("student_id, fecha, fuente, datos")
+        .in("student_id", ids).gte("fecha", haceDias(35)).order("fecha", { ascending: false }).limit(5000);
+      for (const f of visibles(data || [])) (porAlumno[f.student_id] ||= []).push(f);
+    }
+    const resumenes = {};
+    for (const r of roster) {
+      const student = await kvGet(`student:${r.id}`);
+      if (!student) continue;
+      const dias = porDia(porAlumno[r.id] || []);
+      const fecha = ultimoDiaConDatos(dias, hoy, 1);
+      const banda = fecha ? evaluarDia(dias, fecha).banda : null;
+      try { resumenes[r.id] = { nombre: r.name, ...resumenSemanal(student, dias, hoy, banda) }; } catch (e) { /* un alumno con datos raros no rompe el resumen */ }
+    }
+    return NextResponse.json({ ok: true, hoy, resumenes, grupos: gruposDelEquipo(resumenes) });
   }
 
   return mal("Operación desconocida");

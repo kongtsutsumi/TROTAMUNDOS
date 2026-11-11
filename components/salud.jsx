@@ -8,7 +8,8 @@
 //
 // Es solo para el entrenamiento: las pantallas lo dicen, y dicen de qué marca son los datos.
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Gauge, Moon, HeartPulse, Heart, ChevronRight, ChevronLeft, Watch, Info } from "lucide-react";
+import { Gauge, Moon, HeartPulse, Heart, ChevronRight, ChevronLeft, Watch, Info, TrendingUp, BarChart3, Wind, Target } from "lucide-react";
+import { rendimiento as calcularRendimiento, ritmoTexto, tiempoTexto, MARGEN_CALIDAD } from "../lib/rendimiento.mjs";
 import { COLORS } from "../lib/plan-engine.mjs";
 import { saludOp } from "../lib/storage";
 import {
@@ -197,13 +198,15 @@ function GraficoLinea({ puntos, alto = 150, formato = (v) => Math.round(v), sesi
 }
 
 // Barras (sueño en horas, o el puntaje del día). puntos: [{ fecha, valor, color }]
-function GraficoBarras({ puntos, alto = 120, referencia = null, formato = (v) => v, maximo = null }) {
+// minimo: dónde empiezan las barras (para ver diferencias chicas, como el VDOT).
+// semanal: rotula cada barra con la fecha del lunes y su valor.
+function GraficoBarras({ puntos, alto = 120, referencia = null, formato = (v) => v, maximo = null, minimo = 0, semanal = false }) {
   const W = 320, H = alto, pad = { l: 26, r: 6, t: 10, b: 18 };
   const vals = puntos.map((p) => p.valor).filter((v) => v != null);
   if (!vals.length) return <p className="text-xs py-6 text-center" style={{ color: COLORS.textMuted }}>Todavía no hay datos.</p>;
   const max = maximo ?? Math.max(...vals, referencia || 0) * 1.1;
   const ancho = (W - pad.l - pad.r) / puntos.length;
-  const y = (v) => pad.t + (1 - v / max) * (H - pad.t - pad.b);
+  const y = (v) => pad.t + (1 - (Math.max(v, minimo) - minimo) / (max - minimo || 1)) * (H - pad.t - pad.b);
   const cadaCuanto = puntos.length > 10 ? 7 : 1;
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" style={{ display: "block" }}>
@@ -218,8 +221,11 @@ function GraficoBarras({ puntos, alto = 120, referencia = null, formato = (v) =>
       ))}
       {puntos.map((p, i) => (i % cadaCuanto === (puntos.length - 1) % cadaCuanto) && (
         <text key={`t${i}`} x={pad.l + i * ancho + ancho / 2} y={H - 5} textAnchor="middle" style={{ fontSize: 8 }} fill={COLORS.textMuted}>
-          {puntos.length > 10 ? fechaCorta(p.fecha) : diaCorto(p.fecha)}
+          {puntos.length > 10 || semanal ? fechaCorta(p.fecha) : diaCorto(p.fecha)}
         </text>
+      ))}
+      {puntos.map((p, i) => semanal && p.valor != null && (
+        <text key={`v${i}`} x={pad.l + i * ancho + ancho / 2} y={y(p.valor) - 3} textAnchor="middle" style={{ fontSize: 8 }} fill={COLORS.textPrimary}>{formato(p.valor)}</text>
       ))}
     </svg>
   );
@@ -498,6 +504,7 @@ export function SaludAlumno({ student, salud, onIrAPerfil }) {
     <div data-testid="salud-alumno">
       <h2 className="text-lg font-semibold mb-3 uppercase" style={{ ...OSWALD, color: COLORS.textPrimary }}>Salud</h2>
       <Contenido salud={salud} student={student} onIrAPerfil={onIrAPerfil} />
+      <Rendimiento student={student} salud={salud} />
     </div>
   );
 }
@@ -547,6 +554,7 @@ export function SaludCoach({ student }) {
   return (
     <div data-testid="salud-coach" style={{ maxWidth: 560 }}>
       <Contenido salud={salud} student={student} esCoach extra={(calc) => <Tendencia calc={calc} />} />
+      <Rendimiento student={student} salud={salud} tercero />
     </div>
   );
 }
@@ -608,4 +616,356 @@ export function useSaludEquipo(activo = true) {
     return () => { vivo = false; };
   }, [activo]);
   return alumnos;
+}
+
+/* ---------------------------------------------------------------------------
+   RENDIMIENTO (lib/rendimiento.mjs): VDOT estimado, estado de forma, eficiencia aeróbica,
+   calidad bien ejecutada y sueño contra series. Funciona aunque no haya datos de salud: lo
+   principal sale de las actividades del reloj (ritmo, FC, km por km y paso a paso).
+--------------------------------------------------------------------------- */
+
+const hoyLocal = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Lima", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+const su = (tercero, tu, suyo) => (tercero ? suyo : tu);
+
+function useRendimiento(student, salud) {
+  return useMemo(() => {
+    if (!student) return null;
+    const dias = porDia(salud?.ok ? salud.filas : []);
+    const hoy = salud?.hoy || hoyLocal();
+    const f = ultimoDiaConDatos(dias, hoy);
+    const banda = f ? evaluarDia(dias, f).banda : null;
+    return calcularRendimiento(student, dias, hoy, banda);
+  }, [student, salud]);
+}
+
+function TarjetaRend({ id, Icono, titulo, valor, unidad, texto, tono, onClick }) {
+  return (
+    <button type="button" onClick={onClick} className="w-full text-left" data-testid={`rend-${id}`}>
+      <Tarjeta style={{ padding: "14px 16px" }}>
+        <div className="flex items-center gap-3">
+          <span className="flex items-center justify-center rounded-xl shrink-0" style={{ width: 38, height: 38, background: COLORS.surface2, color: colorDe(tono) }}>
+            <Icono size={18} strokeWidth={2} />
+          </span>
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-medium" style={{ color: COLORS.textPrimary }}>{titulo}</div>
+            <div className="text-xs leading-snug" style={{ color: tono ? colorDe(tono) : COLORS.textMuted }}>{texto}</div>
+          </div>
+          {valor != null && (
+            <div className="text-right shrink-0">
+              <span className="text-2xl" style={{ ...OSWALD, color: COLORS.textPrimary }}>{valor}</span>
+              {unidad && <span className="text-xs ml-1" style={{ color: COLORS.textMuted }}>{unidad}</span>}
+            </div>
+          )}
+          <ChevronRight size={16} style={{ color: COLORS.textMuted }} />
+        </div>
+      </Tarjeta>
+    </button>
+  );
+}
+
+function Explica({ children }) {
+  return (
+    <Tarjeta>
+      <div className="flex gap-2.5">
+        <Info size={16} className="shrink-0 mt-0.5" style={{ color: COLORS.textMuted }} />
+        <div className="text-sm leading-relaxed" style={{ color: COLORS.textMuted }}>{children}</div>
+      </div>
+    </Tarjeta>
+  );
+}
+
+function Fila({ izq, sub, der, tono, primera }) {
+  return (
+    <div className="flex items-center gap-3 px-4 py-2.5" style={{ borderTop: primera ? "none" : `1px solid ${COLORS.border}` }}>
+      {tono !== undefined && <span className="w-2 h-2 rounded-full shrink-0" style={{ background: colorDe(tono) }} />}
+      <div className="flex-1 min-w-0">
+        <div className="text-sm first-letter:uppercase" style={{ color: COLORS.textPrimary }}>{izq}</div>
+        {sub && <div className="text-xs truncate" style={{ color: COLORS.textMuted }}>{sub}</div>}
+      </div>
+      <span className="text-lg" style={{ ...OSWALD, color: COLORS.textPrimary }}>{der}</span>
+    </div>
+  );
+}
+
+function Lista({ titulo, children, vacio }) {
+  const hijos = React.Children.toArray(children).filter(Boolean);
+  return (
+    <Tarjeta style={{ padding: 0 }}>
+      <div className="px-4 pt-3"><Etiqueta>{titulo}</Etiqueta></div>
+      {hijos.length ? hijos : <p className="text-sm px-4 pb-4" style={{ color: COLORS.textMuted }}>{vacio}</p>}
+    </Tarjeta>
+  );
+}
+
+function resumenes(r, tercero) {
+  const v = r.vdot, f = r.forma, e = r.eficiencia, c = r.calidad, s = r.sueño;
+  return [
+    {
+      id: "vdot", Icono: TrendingUp, titulo: "VDOT estimado",
+      valor: v.estado === "ok" ? v.vdot.toFixed(1) : null,
+      tono: v.estado !== "ok" ? null : v.sugerencia === "bajar" ? "atento" : "bien",
+      texto: v.estado !== "ok" ? (!v.fcMax ? "Hace falta una sesión de series o una carrera con frecuencia cardíaca." : `Faltan ${v.faltan || 1} salida${v.faltan === 1 ? "" : "s"} con frecuencia cardíaca para estimarlo.`)
+        : `${su(tercero, "Tus ritmos", "Sus ritmos")} usan VDOT ${v.plan ?? "—"}${v.prediccion ? ` · ${tiempoTexto(v.prediccion.min)} en ${v.prediccion.km >= 42 ? "42K" : v.prediccion.km >= 21 ? "21K" : `${v.prediccion.km}K`}` : ""}`,
+    },
+    {
+      id: "forma", Icono: BarChart3, titulo: "Estado de forma",
+      valor: f.estado === "ok" ? f.ratio.toFixed(2) : null, tono: f.estado === "ok" ? f.tono : null,
+      texto: f.estado === "ok" ? f.titulo : "Hacen falta 3 semanas de entrenamientos registrados.",
+    },
+    {
+      id: "eficiencia", Icono: Wind, titulo: "Eficiencia aeróbica",
+      valor: e.estado === "ok" ? `${e.segundos > 0 ? "+" : ""}${e.segundos}` : null, unidad: e.estado === "ok" ? "s/km" : null, tono: e.estado === "ok" ? e.tono : null,
+      texto: e.estado === "ok" ? (e.clave === "mejora" ? "Más rápido a igual FC que hace un mes" : e.clave === "baja" ? "Más lento a igual FC que hace un mes" : "Estable respecto a hace un mes")
+        : "Hacen falta rodajes con FC de hace un mes y de estas dos semanas.",
+    },
+    {
+      id: "calidad", Icono: Target, titulo: "Calidad bien ejecutada",
+      valor: c.estado === "ok" ? `${c.pct}%` : null, tono: c.estado === "ok" ? c.tono : null,
+      texto: c.estado === "ok" ? `${c.dentro} de ${c.reps} repeticiones en ritmo${c.tendencia === "rapido" ? " · tiende a ir rápido" : c.tendencia === "lento" ? " · tiende a ir lento" : ""}`
+        : "Aparece con las sesiones de series registradas con el reloj.",
+    },
+    {
+      id: "sueño", Icono: Moon, titulo: "Sueño y series",
+      valor: s.estado === "ok" ? `${s.diferencia > 0 ? "+" : ""}${s.diferencia}` : null, unidad: s.estado === "ok" ? "s/km" : null, tono: s.estado === "ok" ? s.tono : null,
+      texto: s.estado === "ok" ? "Diferencia de las series con poco sueño" : "Hacen falta series después de noches cortas y de noches buenas.",
+    },
+  ];
+}
+
+function DetalleRend({ id, r, tercero, onVolver }) {
+  const titulos = { vdot: "VDOT estimado", forma: "Estado de forma", eficiencia: "Eficiencia aeróbica", calidad: "Calidad bien ejecutada", sueño: "Sueño y series" };
+  let cuerpo = null;
+  if (id === "vdot") {
+    const v = r.vdot;
+    cuerpo = (
+      <>
+        {v.estado === "ok" && (
+          <Tarjeta>
+            <div className="flex items-end justify-between gap-3">
+              <div>
+                <div className="text-[11px] uppercase tracking-[0.12em]" style={{ color: COLORS.textMuted }}>Estimado</div>
+                <div className="text-4xl" style={{ ...OSWALD, color: COLORS.textPrimary }}>{v.vdot.toFixed(1)}</div>
+              </div>
+              <div className="text-right">
+                <div className="text-[11px] uppercase tracking-[0.12em]" style={{ color: COLORS.textMuted }}>{su(tercero, "Tus ritmos", "Sus ritmos")}</div>
+                <div className="text-2xl" style={{ ...OSWALD, color: COLORS.textMuted }}>{v.plan ?? "—"}</div>
+              </div>
+            </div>
+            {v.prediccion && (
+              <p className="text-sm mt-3" style={{ color: COLORS.textMuted }}>
+                Con este VDOT, {su(tercero, "tu", "su")} tiempo estimado en {v.prediccion.km >= 42 ? "maratón" : v.prediccion.km >= 21 ? "media maratón" : `${v.prediccion.km}K`} es <b style={{ color: COLORS.textPrimary }}>{tiempoTexto(v.prediccion.min)}</b>
+                {v.prediccion.minPlan ? <> (con el VDOT de {su(tercero, "tus", "sus")} ritmos: {tiempoTexto(v.prediccion.minPlan)})</> : null}.
+              </p>
+            )}
+            <p className="text-sm mt-2" style={{ color: v.sugerencia === "mantener" ? COLORS.textMuted : COLORS.textPrimary }}>
+              {v.sugerencia === "subir" ? (tercero ? "Su VDOT estimado está 1,5 o más por encima del de sus ritmos: puedes actualizarlos en Ritmos." : "Estás por encima de tus ritmos actuales: coméntalo con tu coach.")
+                : v.sugerencia === "bajar" ? (tercero ? "Su VDOT estimado está por debajo del de sus ritmos: revisa si viene cansado o si conviene bajarlos." : "Tu VDOT estimado está por debajo de tus ritmos: puede ser cansancio. Coméntalo con tu coach.")
+                : "Coincide con el de sus ritmos actuales.".replace("sus", su(tercero, "tus", "sus"))}
+              {" "}Confianza: {v.confianza}.
+            </p>
+          </Tarjeta>
+        )}
+        <Tarjeta>
+          <Etiqueta>Últimas 8 semanas</Etiqueta>
+          <GraficoBarras alto={140} semanal referencia={v.plan ?? null} formato={(x) => Number(x).toFixed(1).replace(/\.0$/, "")}
+            minimo={Math.floor(Math.min(...v.semanas.map((s) => s.vdot ?? 99), v.plan ?? 99) - 3)}
+            maximo={Math.ceil(Math.max(...v.semanas.map((s) => s.vdot || 0), v.plan || 0) + 1.5)}
+            puntos={v.semanas.map((s) => ({ fecha: s.desde, valor: s.vdot, color: COLORS.track }))} />
+          <p className="text-[11px] mt-1" style={{ color: COLORS.textMuted }}>La línea punteada es el VDOT de {su(tercero, "tus", "sus")} ritmos.</p>
+        </Tarjeta>
+        <Explica>
+          En cada kilómetro con frecuencia cardíaca comparamos cuánto oxígeno cuesta ese ritmo (tablas de Daniels) con el porcentaje de {su(tercero, "tu", "su")} reserva cardíaca que {su(tercero, "usaste", "usó")}.
+          {" "}FC máxima de referencia: <b style={{ color: COLORS.textPrimary }}>{v.fcMax ?? "—"} ppm</b> (la más alta de los últimos 4 meses){v.fcReposo ? <>; en reposo: <b style={{ color: COLORS.textPrimary }}>{Math.round(v.fcReposo)} ppm</b></> : "; sin datos de reposo se asume 60 ppm"}.
+          {" "}Es una estimación: una carrera real es la mejor medida.
+        </Explica>
+        <Lista titulo="Salida por salida" vacio="Todavía no hay salidas con frecuencia cardíaca.">
+          {[...v.salidas].reverse().map((s, i) => <Fila key={s.fecha + i} primera={i === 0} izq={fechaLarga(s.fecha)} sub={`${s.nombre} · ${s.km ?? "—"} km a ${ritmoTexto(s.ritmo)}/km · FC ${s.fcMedia ?? "—"}`} der={s.vdot.toFixed(1)} />)}
+        </Lista>
+      </>
+    );
+  }
+  if (id === "forma") {
+    const f = r.forma;
+    const pos = f.estado === "ok" ? Math.min(100, Math.max(0, ((f.ratio - 0.5) / 1.5) * 100)) : null;
+    cuerpo = (
+      <>
+        {f.estado === "ok" && (
+          <Tarjeta>
+            <Chip tono={f.tono}>{f.titulo}</Chip>
+            <p className="text-sm leading-relaxed mt-2" style={{ color: COLORS.textMuted }}>{f.texto}</p>
+            <div className="relative h-2.5 rounded-full mt-4 overflow-hidden flex">
+              <span style={{ width: "20%", background: COLORS.easy + "88" }} /><span style={{ width: "33.3%", background: COLORS.easy }} />
+              <span style={{ width: "13.4%", background: COLORS.moderate }} /><span style={{ flex: 1, background: COLORS.hard }} />
+            </div>
+            <div className="relative h-3"><span className="absolute -top-1 w-3 h-3 rounded-full" style={{ left: `calc(${pos}% - 6px)`, background: COLORS.textPrimary, border: `2px solid ${COLORS.bg}` }} /></div>
+            <div className="flex justify-between text-[10px]" style={{ color: COLORS.textMuted }}><span>Fresco</span><span>Construyendo</span><span>Rápido</span><span>Muy alta</span></div>
+            <p className="text-xs mt-3" style={{ color: COLORS.textMuted }}>Carga de los últimos 7 días: <b style={{ color: COLORS.textPrimary }}>{f.aguda}</b> · promedio semanal del mes: <b style={{ color: COLORS.textPrimary }}>{f.cronica}</b> · relación {f.ratio.toFixed(2)}</p>
+          </Tarjeta>
+        )}
+        <Tarjeta>
+          <Etiqueta>Carga por semana</Etiqueta>
+          <GraficoBarras alto={140} semanal puntos={f.semanas.map((s) => ({ fecha: s.desde, valor: s.carga, color: COLORS.track }))} />
+        </Tarjeta>
+        <Explica>
+          La carga de cada salida son sus minutos por su intensidad: el esfuerzo que {su(tercero, "anotaste", "anotó")} (1 a 10), o si no la frecuencia cardíaca, o si no el tipo de sesión.
+          {" "}Se compara la última semana con el promedio de las últimas 4. Entre 0,8 y 1,3 el cuerpo asimila bien; por encima de 1,5 sube el riesgo de lesión.
+        </Explica>
+      </>
+    );
+  }
+  if (id === "eficiencia") {
+    const e = r.eficiencia;
+    cuerpo = (
+      <>
+        {e.estado === "ok" && <Tarjeta><Chip tono={e.tono}>{e.clave === "mejora" ? "Mejorando" : e.clave === "baja" ? "Bajando" : "Estable"}</Chip><p className="text-sm leading-relaxed mt-2" style={{ color: COLORS.textMuted }}>{tercero ? e.texto.replace(/^Hoy corres/, "Hoy corre").replace("tu motor", "su motor") : e.texto}</p></Tarjeta>}
+        <Tarjeta>
+          <Etiqueta>Metros por latido en rodajes y fondos</Etiqueta>
+          <GraficoLinea alto={140} formato={(x) => x.toFixed(2)} puntos={e.puntos.map((p) => ({ fecha: p.fecha, valor: p.ef }))} />
+        </Tarjeta>
+        <Explica>Dividimos la velocidad de cada rodaje suave o fondo por su frecuencia cardíaca media. Si sube, {su(tercero, "corres", "corre")} más rápido con el mismo esfuerzo del corazón. Se compara lo de las últimas 2 semanas con lo de hace 1 a 2 meses. El calor, las subidas y el cansancio la bajan.</Explica>
+        <Lista titulo="Rodajes y fondos" vacio="Todavía no hay rodajes con frecuencia cardíaca.">
+          {[...e.puntos].reverse().map((p, i) => <Fila key={p.fecha + i} primera={i === 0} izq={fechaLarga(p.fecha)} sub={`${p.nombre} · ${ritmoTexto(p.ritmo)}/km · FC ${p.fc}`} der={p.ef.toFixed(2)} />)}
+        </Lista>
+      </>
+    );
+  }
+  if (id === "calidad") {
+    const c = r.calidad;
+    cuerpo = (
+      <>
+        {c.estado === "ok" && <Tarjeta><Chip tono={c.tono}>{c.pct}% en ritmo</Chip><p className="text-sm leading-relaxed mt-2" style={{ color: COLORS.textMuted }}>{tercero ? c.texto.replace("tus repeticiones", "sus repeticiones").replace("estás ejecutando", "está ejecutando").replace("Coméntalo con tu coach", "Conviene revisarlo") : c.texto}</p></Tarjeta>}
+        <Explica>Una repetición cuenta como "en ritmo" si queda a {MARGEN_CALIDAD} s/km o menos del ritmo objetivo del plan. Las recuperaciones no cuentan. Últimas 8 semanas.</Explica>
+        <Lista titulo="Sesión por sesión" vacio="Todavía no hay sesiones de series registradas con el reloj.">
+          {[...(c.sesiones || [])].reverse().map((s, i) => (
+            <Fila key={s.fecha + i} primera={i === 0} tono={s.pct >= 75 ? "bien" : s.pct >= 50 ? "atento" : "alerta"} izq={fechaLarga(s.fecha)}
+              sub={`${s.nombre} · ${s.dentro} en ritmo${s.rapidas ? ` · ${s.rapidas} rápidas` : ""}${s.lentas ? ` · ${s.lentas} lentas` : ""}`} der={`${s.pct}%`} />
+          ))}
+        </Lista>
+      </>
+    );
+  }
+  if (id === "sueño") {
+    const s = r.sueño;
+    cuerpo = (
+      <>
+        {s.estado === "ok" ? (
+          <Tarjeta>
+            <p className="text-sm leading-relaxed" style={{ color: COLORS.textPrimary }}>{tercero ? s.texto.replace("tus series", "sus series").replace("duermes", "duerme").replace("Tus series", "Sus series") : s.texto}</p>
+            <div className="grid grid-cols-2 gap-2 mt-3">
+              {[["Menos de 6 h 30", s.corto], ["7 h o más", s.bueno]].map(([t, g]) => (
+                <div key={t} className="rounded-lg p-3" style={{ background: COLORS.surface2 }}>
+                  <div className="text-[11px] uppercase tracking-wider" style={{ color: COLORS.textMuted }}>{t}</div>
+                  <div className="text-xl" style={{ ...OSWALD, color: COLORS.textPrimary }}>{g.dif > 0 ? "+" : ""}{g.dif} s/km</div>
+                  <div className="text-[11px]" style={{ color: COLORS.textMuted }}>contra el objetivo · {g.n} sesiones</div>
+                </div>
+              ))}
+            </div>
+          </Tarjeta>
+        ) : (
+          <Tarjeta><p className="text-sm" style={{ color: COLORS.textMuted }}>Faltan {s.faltanCorto ? `${s.faltanCorto} sesión(es) de series después de dormir menos de 6 h 30` : ""}{s.faltanCorto && s.faltanBueno ? " y " : ""}{s.faltanBueno ? `${s.faltanBueno} después de dormir 7 h o más` : ""} para comparar.</p></Tarjeta>
+        )}
+        <Explica>Para cada sesión de series vemos cuánto se {su(tercero, "desviaron tus", "desviaron sus")} repeticiones del ritmo objetivo (en s/km; positivo es más lento) y cuánto {su(tercero, "dormiste", "durmió")} la noche anterior. Últimos 4 meses.</Explica>
+        <Lista titulo="Sesiones" vacio="Todavía no hay sesiones de series con datos de sueño.">
+          {[...(s.pares || [])].reverse().map((p, i) => <Fila key={p.fecha + i} primera={i === 0} izq={fechaLarga(p.fecha)} sub={`${p.nombre} · durmió ${horasTexto(p.sueño)}`.replace("durmió", su(tercero, "dormiste", "durmió"))} der={`${p.dif > 0 ? "+" : ""}${p.dif}`} />)}
+        </Lista>
+      </>
+    );
+  }
+  return (
+    <div className="space-y-3" data-testid={`detalle-rend-${id}`}>
+      <button type="button" onClick={onVolver} data-testid="volver-rendimiento" className="inline-flex items-center gap-1 text-sm font-medium" style={{ color: COLORS.track }}>
+        <ChevronLeft size={16} /> Rendimiento
+      </button>
+      <h2 className="text-xl uppercase" style={{ ...OSWALD, color: COLORS.textPrimary }}>{titulos[id]}</h2>
+      {cuerpo}
+      <p className="text-[11px] text-center" style={{ color: COLORS.textMuted }}>Estimaciones para {su(tercero, "tu", "su")} entrenamiento y rendimiento: no son un diagnóstico ni consejo médico.</p>
+    </div>
+  );
+}
+
+export function Rendimiento({ student, salud, tercero = false }) {
+  const r = useRendimiento(student, salud);
+  const [abierto, setAbierto] = useState(null);
+  const ancla = React.useRef(null);
+  if (!r) return null;
+  const abrir = (id) => { setAbierto(id); setTimeout(() => ancla.current?.scrollIntoView({ block: "start" }), 0); };
+  return (
+    <div ref={ancla} className="mt-6 scroll-mt-4" data-testid="rendimiento">
+      {abierto ? <DetalleRend id={abierto} r={r} tercero={tercero} onVolver={() => abrir(null)} /> : (
+        <>
+          <h3 className="text-lg font-semibold mb-3 uppercase" style={{ ...OSWALD, color: COLORS.textPrimary }}>Rendimiento</h3>
+          <div className="space-y-3">
+            {resumenes(r, tercero).map((x) => <TarjetaRend key={x.id} {...x} onClick={() => abrir(x.id)} />)}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------------
+   RESUMEN DE LA SEMANA DEL EQUIPO (coach)
+--------------------------------------------------------------------------- */
+
+const GRUPOS = [
+  { id: "sobrecargados", titulo: "Sobrecargados o poco recuperados", tono: "alerta", motivo: (r) => r.forma === "alta" ? "Carga muy alta" : r.forma === "rapido" ? "Subió la carga rápido" : "Viene poco recuperado" },
+  { id: "durmieronMal", titulo: "Durmieron mal la semana", tono: "atento", motivo: (r) => `Promedio ${horasTexto(r.sueñoPromedio)}` },
+  { id: "subieronVdot", titulo: "Subieron su VDOT", tono: "bien", motivo: (r) => (r.vdot ? `VDOT ${r.vdot.toFixed(1)}${r.vdotPlan ? ` (ritmos: ${r.vdotPlan})` : ""}` : "Mejorando") },
+  { id: "asimilando", titulo: "Asimilando bien", tono: "bien", motivo: (r) => (r.forma === "fresco" ? "Fresco" : "Construyendo bien") },
+];
+
+export function ResumenEquipo({ onElegir }) {
+  const [abierto, setAbierto] = useState(false);
+  const [datos, setDatos] = useState(null);
+  const abrir = async () => {
+    const nuevo = !abierto;
+    setAbierto(nuevo);
+    if (nuevo) { setDatos(null); setDatos(await saludOp("semana")); }
+  };
+  return (
+    <div className="mb-3" data-testid="resumen-equipo">
+      <button type="button" onClick={abrir} className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-semibold text-left"
+        style={{ background: abierto ? COLORS.surface2 : COLORS.surface, color: COLORS.textPrimary, border: `1px solid ${abierto ? COLORS.track : COLORS.border}` }}>
+        <BarChart3 size={15} style={{ color: COLORS.track }} />
+        <span className="flex-1">Resumen de la semana</span>
+        <ChevronRight size={15} style={{ color: COLORS.textMuted, transform: abierto ? "rotate(90deg)" : "none" }} />
+      </button>
+      {abierto && (
+        <div className="rounded-lg p-3 mt-2 space-y-3" style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}` }}>
+          {!datos ? <p className="text-sm" style={{ color: COLORS.textMuted }}>Calculando…</p> : !datos.ok ? (
+            <p className="text-sm" style={{ color: COLORS.textMuted }}>No se pudo calcular el resumen. Prueba en un rato.</p>
+          ) : (
+            <>
+              <p className="text-xs" style={{ color: COLORS.textMuted }}>Últimos 7 días, con lo que llegó de los relojes.</p>
+              {GRUPOS.map((g) => {
+                const ids = datos.grupos?.[g.id] || [];
+                return (
+                  <div key={g.id} data-testid={`grupo-${g.id}`}>
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <span className="w-2 h-2 rounded-full" style={{ background: colorDe(g.tono) }} />
+                      <span className="text-[11px] font-semibold uppercase tracking-[0.1em]" style={{ color: COLORS.textMuted }}>{g.titulo} · {ids.length}</span>
+                    </div>
+                    {ids.length === 0 ? <p className="text-xs pl-4" style={{ color: COLORS.textMuted }}>Nadie.</p> : (
+                      <div className="flex flex-wrap gap-1.5 pl-4">
+                        {ids.map((id) => {
+                          const r = datos.resumenes[id] || {};
+                          return (
+                            <button key={id} type="button" onClick={() => onElegir?.(id)} className="text-left px-2.5 py-1.5 rounded-lg text-xs"
+                              style={{ background: COLORS.bg, border: `1px solid ${COLORS.border}`, color: COLORS.textPrimary }}>
+                              <span className="font-semibold">{r.nombre || id}</span>
+                              <span className="block" style={{ color: COLORS.textMuted }}>{g.motivo(r)}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
