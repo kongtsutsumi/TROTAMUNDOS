@@ -76,7 +76,7 @@ export async function POST(request) {
   // El consentimiento del alumno solo se toca por /api/consentimiento, donde solo él puede
   // darlo o retirarlo, y las filas de Garmin y COROS (testigos de acceso) son solo del servidor.
   // Por acá nadie las lee ni las escribe, ni siquiera el administrador.
-  if (needsKey && typeof key === "string" && (key.startsWith("consentimiento:") || key.startsWith("garmin:") || key.startsWith("coros:"))) {
+  if (needsKey && typeof key === "string" && (key.startsWith("consentimiento:") || key.startsWith("garmin:") || key.startsWith("coros:") || key.startsWith("salud:"))) {
     return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
   }
 

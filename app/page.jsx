@@ -7,13 +7,14 @@ import { alertasHabilitadasPorCoach } from "../lib/intervals-icu.mjs";
 import {
   Users, User, Plus, ArrowLeft, Check, Flag, TrendingUp, TrendingDown,
   Minus, X, ChevronRight, ChevronLeft, ChevronDown, RotateCw, Activity, Search, AlertCircle, Lock, KeyRound,
-  FileText, RefreshCcw, Trash2, BarChart2, Clock, Edit3, Download, QrCode, CalendarDays, Watch, LogOut, Megaphone, Pin, Send, Link2, Home, Wallet, Bell, BellOff, UserCog
+  FileText, RefreshCcw, Trash2, BarChart2, Clock, Edit3, Download, QrCode, CalendarDays, Watch, LogOut, Megaphone, Pin, Send, Link2, Home, Wallet, Bell, BellOff, UserCog, HeartPulse,
 } from "lucide-react";
 import { useMyMembership, MembershipCard, PagosAlumno, CobrosPanel, MembershipBadge, useMemberships, statusOf } from "../components/pagos";
 import { PanelCoaches } from "../components/coaches";
 import { ConsentimientoAntesDeConectar, PermisosDelReloj } from "../components/consentimiento";
 import { ConexionGarmin } from "../components/garmin";
 import { ConexionCoros } from "../components/coros";
+import { SaludAlumno, ResumenSalud, SaludCoach, PuntoSalud, useSalud, useSaludEquipo } from "../components/salud";
 import {
   applyIntermediateRaceDayPatch,
   AUTO_PUBLISH_LABEL,
@@ -3234,6 +3235,8 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
   // Empieza vacío: la lista de la pantalla de inicio trae a TODOS los alumnos (solo nombres),
   // y un coach adicional no debe ver ni un instante a los que no son suyos.
   const [roster, setRoster] = useState([]);
+  // Cómo viene cada alumno de recuperación (punto ámbar o rojo junto a su nombre).
+  const saludEquipo = useSaludEquipo();
   const refreshRoster = useCallback(async () => {
     const full = await safeGetWithRetry("roster", 3, 350);
     if (full != null) setRoster(full);
@@ -3321,6 +3324,7 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
   const [paceAlerts, setPaceAlerts] = useState([]);
   const [showPanorama, setShowPanorama] = useState(false);
   const [showRitmos, setShowRitmos] = useState(false);
+  const [showSalud, setShowSalud] = useState(false);
   const [panoramaEdits, setPanoramaEdits] = useState({});
   const [panoramaLongEdits, setPanoramaLongEdits] = useState({});
   const [qualityEdits, setQualityEdits] = useState({});
@@ -3342,6 +3346,7 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
     setShowOtros(false);
     setShowPanorama(false);
     setShowRitmos(false);
+    setShowSalud(false);
     setViewedWeek(null);
     setShowChangeGoal(false);
     setShowIntermediateRace(false);
@@ -4257,6 +4262,11 @@ const resetPlan = async () => {
                     style={{ background: showRitmos ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
                     <Activity size={14} /> Ritmos
                   </button>
+                  <button onClick={() => setShowSalud((v) => !v)} data-testid="boton-salud-coach"
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold"
+                    style={{ background: showSalud ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
+                    <HeartPulse size={14} /> Salud
+                  </button>
                   <button onClick={() => setShowKmSummary((v) => !v)}
                     className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold"
                     style={{ background: showKmSummary ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
@@ -4489,6 +4499,13 @@ const resetPlan = async () => {
                   </div>
                   </>
                   )}
+                </div>
+              )}
+
+              {showSalud && (
+                <div className="rounded-xl p-4 mb-4" style={{ background: COLORS.bg, border: `1px solid ${COLORS.border}` }}>
+                  <div className="text-sm font-semibold mb-3" style={{ color: COLORS.textPrimary, fontFamily: "'Oswald', sans-serif" }}>SALUD</div>
+                  <SaludCoach student={student} />
                 </div>
               )}
 
@@ -5055,6 +5072,7 @@ const resetPlan = async () => {
                 <div className="min-w-0">
                   <div className="text-sm font-semibold truncate flex items-center gap-2" style={{ color: COLORS.textPrimary }}>
                     {r.name}
+                    <PuntoSalud banda={saludEquipo[r.id]?.banda} />
                     {rosterProgress[r.id]?.reloj && (
                       <span className="inline-flex shrink-0"
                         title={rosterProgress[r.id].reloj.problema
@@ -5620,14 +5638,14 @@ function MuroAnuncios({ esCoach, onLeido }) {
   );
 }
 
-// Las cuatro pestañas de la barra inferior del alumno. El reloj vive dentro de Perfil.
 // Barra del alumno, como en Chrono Runners: el plan va al medio, como botón principal.
-// El progreso vive dentro de Plan, debajo de la semana.
+// El progreso vive dentro de Plan, debajo de la semana. Los pagos y el reloj viven en Perfil
+// (los pagos primero).
 const PESTANAS_ALUMNO = [
   { id: "inicio", etiqueta: "Inicio", Icono: Home },
-  { id: "anuncios", etiqueta: "Anuncios", Icono: Megaphone },
+  { id: "salud", etiqueta: "Salud", Icono: HeartPulse },
   { id: "semana", etiqueta: "Plan", Icono: Activity, centro: true },
-  { id: "pagos", etiqueta: "Pagos", Icono: Wallet },
+  { id: "anuncios", etiqueta: "Anuncios", Icono: Megaphone },
   { id: "perfil", etiqueta: "Perfil", Icono: User },
 ];
 
@@ -5644,6 +5662,8 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
   const [pestana, setPestana] = useState("inicio");
   // Vigencia del plan y pagos (una sola petición para Inicio y Pagos).
   const miPlan = useMyMembership();
+  // Datos de salud del reloj (una sola petición para Inicio y Salud).
+  const { salud } = useSalud(studentId);
   // Cuántas publicaciones del muro tiene sin leer: se mira al entrar y cada minuto.
   const [pendientesMuro, setPendientesMuro] = useState(0);
   useEffect(() => {
@@ -5656,8 +5676,12 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
     const t = setInterval(mirar, 60000);
     return () => { vivo = false; clearInterval(t); };
   }, []);
+  // Tocar una pestaña la abre desde su inicio (por ejemplo, Salud vuelve al resumen si se
+  // estaba viendo el historial de un dato).
+  const [vueltaDePestana, setVueltaDePestana] = useState(0);
   const irA = useCallback((p) => {
     setPestana(p);
+    setVueltaDePestana((n) => n + 1);
     if (typeof window !== "undefined") window.scrollTo({ top: 0 });
   }, []);
   // Al volver de autorizar el reloj, la dirección trae "?reloj=…". El aviso lo muestra el
@@ -5928,16 +5952,8 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
               Hola, {(student.name || "").trim().split(/\s+/)[0]}
             </h1>
           </div>
-          {pendientesMuro > 0 && (
-            <button onClick={() => irA("anuncios")} className="w-full rounded-2xl p-4 flex items-center gap-3 text-left"
-              style={{ background: COLORS.track + "1A", border: `1px solid ${COLORS.track}66` }}>
-              <Megaphone size={20} style={{ color: COLORS.track }} />
-              <span className="flex-1 text-sm font-semibold" style={{ color: COLORS.textPrimary }}>
-                {pendientesMuro === 1 ? "Tienes 1 anuncio nuevo" : `Tienes ${pendientesMuro} anuncios nuevos`}
-              </span>
-              <ChevronRight size={16} style={{ color: COLORS.track }} />
-            </button>
-          )}
+          {/* Resumen de cada sección, en este orden: pagos, plan, salud y anuncios. */}
+          <MembershipCard data={miPlan.data} onMore={() => irA("perfil")} />
           {currentWeekData && submitSlots.length > 0 && (
             <div className="rounded-2xl p-4" style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}` }}>
               <div className="flex items-center justify-between gap-2 mb-2">
@@ -5980,15 +5996,22 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
               )}
             </div>
           )}
-          <MembershipCard data={miPlan.data} onMore={() => irA("pagos")} />
+          <ResumenSalud salud={salud} onAbrir={() => irA("salud")} />
+          <button onClick={() => irA("anuncios")} className="w-full rounded-2xl p-4 flex items-center gap-3 text-left" data-testid="resumen-anuncios"
+            style={pendientesMuro > 0
+              ? { background: COLORS.track + "1A", border: `1px solid ${COLORS.track}66` }
+              : { background: COLORS.surface, border: `1px solid ${COLORS.border}` }}>
+            <Megaphone size={20} style={{ color: pendientesMuro > 0 ? COLORS.track : COLORS.textMuted }} />
+            <span className="flex-1 text-sm font-semibold" style={{ color: COLORS.textPrimary }}>
+              {pendientesMuro === 0 ? "Anuncios: estás al día" : pendientesMuro === 1 ? "Tienes 1 anuncio nuevo" : `Tienes ${pendientesMuro} anuncios nuevos`}
+            </span>
+            <ChevronRight size={16} style={{ color: pendientesMuro > 0 ? COLORS.track : COLORS.textMuted }} />
+          </button>
         </div>
       )}
 
-      {student && pestana === "pagos" && (
-        <div>
-          <h2 className="text-lg font-semibold mb-3" style={{ fontFamily: "'Oswald', sans-serif", color: COLORS.textPrimary }}>Pagos</h2>
-          <PagosAlumno data={miPlan.data} />
-        </div>
+      {student && pestana === "salud" && (
+        <SaludAlumno key={vueltaDePestana} student={student} salud={salud} onIrAPerfil={() => irA("perfil")} />
       )}
 
       {pestana === "semana" && needsYesterdayConfirm && (
@@ -6202,6 +6225,10 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
 
       {student && pestana === "perfil" && (
         <div className="space-y-3">
+          <div data-testid="perfil-pagos">
+            <h2 className="text-lg font-semibold mb-3" style={{ fontFamily: "'Oswald', sans-serif", color: COLORS.textPrimary }}>Pagos</h2>
+            <PagosAlumno data={miPlan.data} />
+          </div>
           <div className="rounded-xl p-4" style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}` }}>
             <div className="text-[10px] uppercase tracking-widest mb-1" style={{ color: COLORS.textMuted }}>Alumno</div>
             <div className="text-2xl font-semibold" style={{ fontFamily: "'Oswald', sans-serif", color: COLORS.textPrimary }}>{student.name}</div>
@@ -6261,7 +6288,7 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
               const activa = pestana === id;
               const sesionPendienteHoy = !inicioPendiente && !!(currentWeekData?.plan?.[todayDowIndex]?.paceKey && !currentWeekData?.log?.[todayDowIndex]?.completed && !currentWeekData?.paused);
               const pagoUrgente = ["por_vencer", "vencido"].includes(miPlan.data?.status?.status);
-              const punto = (id === "anuncios" && pendientesMuro > 0) || (id === "pagos" && pagoUrgente) || (id === "semana" && sesionPendienteHoy);
+              const punto = (id === "anuncios" && pendientesMuro > 0) || (id === "perfil" && pagoUrgente) || (id === "semana" && sesionPendienteHoy);
               if (centro) {
                 // Botón principal: un círculo grande que sobresale de la barra.
                 return (
@@ -6288,7 +6315,7 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
                   <span className="relative">
                     <Icono size={22} strokeWidth={activa ? 2.4 : 1.8} />
                     {punto && (
-                      <span className="absolute -top-0.5 -right-1 rounded-full" aria-label={id === "pagos" ? "Tu plan está por vencer" : "Hay anuncios nuevos"}
+                      <span className="absolute -top-0.5 -right-1 rounded-full" aria-label={id === "perfil" ? "Tu plan está por vencer" : "Hay anuncios nuevos"}
                         style={{ width: 10, height: 10, background: COLORS.track, border: `2px solid ${COLORS.surface}` }} />
                     )}
                   </span>
