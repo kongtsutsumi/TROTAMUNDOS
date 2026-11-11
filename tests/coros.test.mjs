@@ -137,6 +137,9 @@ console.log("▸ Reloj y atribución");
   check("Modelo con marca", C.modeloCoros("PACE 4") === "COROS PACE 4" && C.modeloCoros("coros VERTIX 2S") === "COROS VERTIX 2S" && C.modeloCoros("") === "COROS");
   check("Atribución", C.atribucionCoros("PACE 3") === "COROS PACE 3 · datos de COROS");
   check("Dispositivo del texto", C.dispositivoDe(texto("Bound devices:\n1. COROS PACE 4 Pro (firmware 3.1)")) === "COROS PACE 4 Pro", C.dispositivoDe(texto("Bound devices:\n1. COROS PACE 4 Pro (firmware 3.1)")));
+  check("El reloj, no la banda de frecuencia", C.dispositivoDe(texto("Bound devices:\n1. COROS HEART RATE (firmware 1.2)\n2. COROS PACE 4 (firmware 3.1)")) === "COROS PACE 4");
+  check("Solo una banda: ningún reloj", C.dispositivoDe(texto("Bound devices:\n1. COROS HEART RATE")) === null);
+  check("Qué es reloj", C.esReloj("COROS PACE 4") && C.esReloj("COROS VERTIX 2S") && !C.esReloj("COROS HEART RATE") && !C.esReloj("COROS POD 2") && !C.esReloj("COROS") && !C.esReloj(null));
   check("Dispositivo por etiqueta", C.dispositivoDe(texto("Device name: APEX 2 Pro")) === "APEX 2 Pro");
   check("Dispositivo estructurado", C.dispositivoDe({ content: [], structuredContent: { devices: [{ deviceName: "PACE 3" }] } }) === "PACE 3");
 }

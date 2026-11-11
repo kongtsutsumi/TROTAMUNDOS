@@ -11,7 +11,7 @@ import { sesionDelPedido, entradaDe } from "../../../lib/equipo-servidor";
 import { puedeManejar } from "../../../lib/equipo.mjs";
 import { estaConectado as intervalsConectado } from "../../../lib/intervals-push";
 import { estaConectadoGarmin } from "../../../lib/garmin-servidor";
-import { estaDisponible, estaConectadoCoros, urlDeAutorizacion, enviarSemanaACoros, traerDeCoros, desconectarCoros } from "../../../lib/coros-servidor";
+import { estaDisponible, estaConectadoCoros, corregirModelo, urlDeAutorizacion, enviarSemanaACoros, traerDeCoros, desconectarCoros } from "../../../lib/coros-servidor";
 import { leerConsentimiento } from "../../../lib/salud-servidor";
 import { aceptoEntrenamiento, resumen as resumenConsentimiento } from "../../../lib/consentimiento.mjs";
 
@@ -37,12 +37,13 @@ export async function POST(request) {
 
   if (op === "estado") {
     const c = student.coros || {};
+    const conectado = await estaConectadoCoros(studentId);
     return NextResponse.json({
       ok: true,
       disponible: estaDisponible(),
-      conectado: await estaConectadoCoros(studentId),
+      conectado,
       conectadoEl: c.conectadoEl ?? null,
-      dispositivo: c.dispositivo ?? null,
+      dispositivo: conectado ? await corregirModelo(studentId).catch(() => c.dispositivo ?? null) : null,
       ultimoEnvio: c.ultimoEnvio ?? null,
       ultimaLectura: c.ultimaLectura ?? null,
       porBorrar: Array.isArray(c.porBorrar) ? c.porBorrar : [],
