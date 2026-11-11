@@ -148,6 +148,13 @@ console.log("\n▸ Avisos (push)");
   check("IP ajena", !G.ipDeGarmin("8.8.8.8") && !G.ipDeGarmin("204.77.164.1") && !G.ipDeGarmin("x"));
 }
 
+console.log("▸ Ping y permisos");
+{
+  check("Es ping", G.esPing({ userId: "u", callbackURL: "https://apis.garmin.com/x" }) && !G.esPing({ userId: "u", calendarDate: "2026-11-10" }) && !G.esPing({ userId: "u", callbackURL: "x", steps: 1 }));
+  check("Ping solo a Garmin", G.urlDePingValida("https://apis.garmin.com/wellness-api/rest/dailies?token=1") && !G.urlDePingValida("https://apis.garmin.com.evil.io/x") && !G.urlDePingValida("http://apis.garmin.com/x") && !G.urlDePingValida("nada"));
+  check("Compartiendo salud", G.compartiendoSalud(undefined) && G.compartiendoSalud(["HEALTH_EXPORT"]) && !G.compartiendoSalud(["ACTIVITY_EXPORT"]));
+}
+
 console.log(`\n${passed} pruebas OK, ${failed} fallidas.`);
 if (failed) {
   for (const f of failures) console.log(`  ✗ ${f}`);

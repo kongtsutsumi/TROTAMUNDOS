@@ -20,6 +20,7 @@ import { puedeManejar, filtrarRoster } from "../../../lib/equipo.mjs";
 import { leerSalud, leerConsentimiento } from "../../../lib/salud-servidor";
 import { aceptoSalud } from "../../../lib/consentimiento.mjs";
 import { porDia, evaluarDia, ultimoDiaConDatos } from "../../../lib/recuperacion.mjs";
+import { compartiendoSalud } from "../../../lib/garmin.mjs";
 
 export const dynamic = "force-dynamic";
 
@@ -47,6 +48,7 @@ async function estadoDe(student) {
   if (!marca) return { estado: "sin-reloj", marca };
   if (!aceptoSalud(await leerConsentimiento(student.id))) return { estado: "sin-permiso", marca };
   if (marca === "garmin" && !saludGarminActiva()) return { estado: "proximamente", marca };
+  if (marca === "garmin" && !compartiendoSalud((await kvGet(`garmin:cuenta:${student.id}`))?.permisos)) return { estado: "garmin-sin-salud", marca };
   if (marca === "intervals" && (await kvGet(`salud:lectura:${student.id}`))?.sinPermiso) return { estado: "reconectar", marca };
   return { estado: "ok", marca };
 }

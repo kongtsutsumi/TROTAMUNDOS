@@ -428,6 +428,7 @@ const MENSAJES = {
   "sin-reloj": { titulo: "Conecta tu reloj", texto: "Conecta tu reloj para ver cómo duermes y cuánto te recuperas de cada entrenamiento.", boton: "Conectar mi reloj" },
   "sin-permiso": { titulo: "Activa tus datos de salud", texto: "Tu reloj está conectado, pero no diste el permiso para tus datos de salud (sueño, VFC, frecuencia en reposo). Puedes activarlo en Perfil, en Tus permisos.", boton: "Ir a mis permisos" },
   reconectar: { titulo: "Vuelve a conectar tu reloj", texto: "Para traer tus datos de salud, intervals.icu necesita un permiso nuevo. Desconecta tu reloj en Perfil y vuelve a conectarlo: tarda un minuto.", boton: "Ir a Perfil" },
+  "garmin-sin-salud": { titulo: "Activa tu salud en Garmin", texto: "En Garmin Connect está desactivado compartir tus datos de salud con TROTAMUNDOS. Actívalo en la app Garmin Connect, en la configuración de apps conectadas, para TROTAMUNDOS.", boton: null },
   proximamente: { titulo: "Muy pronto", texto: "Los datos de salud de Garmin aparecerán aquí en las próximas semanas. Tus entrenamientos siguen llegando como siempre.", boton: null },
 };
 
@@ -438,6 +439,7 @@ function Invitacion({ estado, onIrAPerfil, esCoach }) {
     "sin-permiso": "Este alumno no dio el permiso para sus datos de salud.",
     reconectar: "Este alumno tiene que volver a conectar intervals.icu para que lleguen sus datos de salud.",
     proximamente: "Los datos de salud de Garmin se mostrarán cuando termine la revisión de Garmin.",
+    "garmin-sin-salud": "Este alumno desactivó en Garmin Connect el permiso para compartir sus datos de salud.",
   }[estado];
   return (
     <Tarjeta data-testid={`salud-${estado}`}>
@@ -469,7 +471,9 @@ function Contenido({ salud, student, onIrAPerfil, esCoach, extra }) {
       <div className="space-y-3">
         <Tarjeta>
           <p className="text-sm leading-relaxed" style={{ color: COLORS.textMuted }}>
-            {esCoach ? "Todavía no llegan datos de salud de su reloj." : "Todavía no llegan datos de salud de tu reloj. Duerme con él puesto y sincronízalo en la mañana con su app: tus datos aparecerán aquí."}
+            {esCoach ? "Todavía no llegan datos de salud de su reloj." : salud.marca === "garmin"
+              ? "Garmin envía tus datos de salud desde el día en que conectaste tu reloj (no el historial anterior). Duerme con él puesto y sincronízalo en la mañana con Garmin Connect: tus datos aparecerán aquí."
+              : "Todavía no llegan datos de salud de tu reloj. Duerme con él puesto y sincronízalo en la mañana con su app: tus datos aparecerán aquí."}
           </p>
         </Tarjeta>
         <Aviso marca={salud.marca} dispositivo={dispositivo} tercero={esCoach} />
