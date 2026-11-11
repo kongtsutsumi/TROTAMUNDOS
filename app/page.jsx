@@ -9,7 +9,7 @@ import {
   Minus, X, ChevronRight, ChevronLeft, ChevronDown, RotateCw, Activity, Search, AlertCircle, Lock, KeyRound,
   FileText, RefreshCcw, Trash2, BarChart2, Clock, Edit3, Download, QrCode, CalendarDays, Watch, LogOut, Megaphone, Pin, Send, Link2, Home, Wallet, Bell, BellOff, UserCog, HeartPulse,
 } from "lucide-react";
-import { useMyMembership, MembershipCard, PagosAlumno, CobrosPanel, MembershipBadge, useMemberships, statusOf } from "../components/pagos";
+import { useMyMembership, MembershipCard, MembershipLinea, PagosAlumno, CobrosPanel, MembershipBadge, useMemberships, statusOf } from "../components/pagos";
 import { PanelCoaches } from "../components/coaches";
 import { ConsentimientoAntesDeConectar, PermisosDelReloj } from "../components/consentimiento";
 import { ConexionGarmin } from "../components/garmin";
@@ -5953,7 +5953,7 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
             </h1>
           </div>
           {/* Resumen de cada sección, en este orden: pagos, plan, salud y anuncios. */}
-          <MembershipCard data={miPlan.data} onMore={() => irA("perfil")} />
+          <MembershipLinea data={miPlan.data} onMore={() => irA("perfil")} />
           {currentWeekData && submitSlots.length > 0 && (
             <div className="rounded-2xl p-4" style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}` }}>
               <div className="flex items-center justify-between gap-2 mb-2">

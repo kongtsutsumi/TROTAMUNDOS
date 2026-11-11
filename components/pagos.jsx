@@ -6,7 +6,7 @@
 //     registrado) e insignia en el listado.
 // Un plan vencido NO bloquea nada: solo avisa.
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { Trash2, Plus, Check, Settings, ChevronDown, ChevronRight } from "lucide-react";
+import { Trash2, Plus, Check, Settings, ChevronDown, ChevronRight, Wallet } from "lucide-react";
 import { COLORS } from "../lib/plan-engine.mjs";
 import { pagosOp } from "../lib/storage";
 import { describeStatus, formatDMY, formatShort, suggestedStart, periodEnd, isISODate, todayIn } from "../lib/vigencia.mjs";
@@ -108,6 +108,29 @@ export function MembershipCard({ data: d, onMore }) {
         </button>
       )}
     </div>
+  );
+}
+
+// Versión de una línea para Inicio: discreta cuando está todo en orden; si está por vencer o
+// venció, toma el color del aviso (sin dejar de ser una línea).
+export function MembershipLinea({ data: d, onMore }) {
+  if (!d) return null;
+  const st = d.status;
+  const urgente = st.status === "por_vencer" || st.status === "vencido";
+  const tono = STATUS_COLOR[st.status];
+  const texto = st.status === "none" ? "Tu coach todavía no registra tu pago"
+    : st.status === "vencido" ? `Tu plan venció el ${formatShort(st.end)}`
+    : st.status === "por_vencer" ? `${describeStatus(st)}: coordina tu pago`
+    : `Plan vigente hasta el ${formatShort(st.end)}`;
+  return (
+    <button type="button" onClick={onMore} data-testid="linea-vigencia"
+      className="w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl text-left"
+      style={{ background: urgente ? tono + "14" : "transparent", border: `1px solid ${urgente ? tono + "55" : COLORS.border}` }}>
+      <Wallet size={15} style={{ color: urgente ? tono : COLORS.textMuted }} />
+      <span className="flex-1 text-[13px] truncate" style={{ color: urgente ? COLORS.textPrimary : COLORS.textMuted }}>{texto}</span>
+      <span className="w-2 h-2 rounded-full shrink-0" style={{ background: tono }} />
+      <ChevronRight size={14} style={{ color: COLORS.textMuted }} />
+    </button>
   );
 }
 
