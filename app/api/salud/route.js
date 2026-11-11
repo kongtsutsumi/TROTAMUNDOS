@@ -10,9 +10,9 @@
 //   conectado sin el permiso WELLNESS:READ) · proximamente (Garmin, hasta que pase la revisión
 //   de pantallas que pide su acuerdo).
 //
-// Garmin: su acuerdo pide mostrarle las pantallas con sus datos de salud antes de lanzarlas.
-// Mientras no esté la variable SALUD_GARMIN=activa en Vercel, los datos de salud que llegan
-// de Garmin se siguen guardando (con el consentimiento del alumno) pero no se muestran.
+// Garmin: las pantallas con sus datos de salud se le enviaron el 10 de noviembre de 2026 (su
+// soporte respondió que en el nivel Starter no hacen revisiones) y se activaron ese mismo día.
+// Para ocultarlas sin tocar el código: variable SALUD_GARMIN=pausada en Vercel.
 import { NextResponse } from "next/server";
 import { kvGet, supabaseAdmin } from "../../../lib/supabaseAdmin";
 import { sesionDelPedido, entradaDe } from "../../../lib/equipo-servidor";
@@ -24,7 +24,7 @@ import { porDia, evaluarDia, ultimoDiaConDatos } from "../../../lib/recuperacion
 export const dynamic = "force-dynamic";
 
 const mal = (error, status = 400) => NextResponse.json({ ok: false, error }, { status });
-const saludGarminActiva = () => process.env.SALUD_GARMIN === "activa";
+const saludGarminActiva = () => process.env.SALUD_GARMIN !== "pausada";
 
 function hoyEnLima() {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Lima", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());

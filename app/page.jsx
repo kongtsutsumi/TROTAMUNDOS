@@ -6340,7 +6340,7 @@ function RoleSelect({ onSelect }) {
     <div className="max-w-2xl mx-auto px-4 pb-16" style={{ paddingTop: "5.5rem" }}>
       <div className="text-center mb-12">
         <img src="/logo.png" alt="Trotamundos" className="mx-auto" style={{ width: "min(320px, 80vw)", height: "auto" }} />
-        <div className="text-sm font-semibold tracking-[0.3em] uppercase mt-5" style={{ color: COLORS.track }}>el app · V.05</div>
+        <div className="text-sm font-semibold tracking-[0.3em] uppercase mt-5" style={{ color: COLORS.track }}>el app · V.06</div>
         <div className="w-16 h-1 mx-auto mt-3 mb-4" style={{ background: COLORS.track }} />
         <p className="text-sm" style={{ color: COLORS.textMuted }}>Tú cumples el plan, tu coach lo diseña semana a semana.</p>
       </div>
