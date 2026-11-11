@@ -4265,7 +4265,7 @@ const resetPlan = async () => {
                   <button onClick={() => setShowSalud((v) => !v)} data-testid="boton-salud-coach"
                     className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold"
                     style={{ background: showSalud ? COLORS.track : COLORS.surface2, color: COLORS.lane, border: `1px solid ${COLORS.border}` }}>
-                    <HeartPulse size={14} /> Salud
+                    <HeartPulse size={14} /> Forma
                   </button>
                   <button onClick={() => setShowKmSummary((v) => !v)}
                     className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold"
@@ -4504,8 +4504,11 @@ const resetPlan = async () => {
 
               {showSalud && (
                 <div className="rounded-xl p-4 mb-4" style={{ background: COLORS.bg, border: `1px solid ${COLORS.border}` }}>
-                  <div className="text-sm font-semibold mb-3" style={{ color: COLORS.textPrimary, fontFamily: "'Oswald', sans-serif" }}>SALUD</div>
-                  <SaludCoach student={student} />
+                  <div className="text-sm font-semibold mb-3" style={{ color: COLORS.textPrimary, fontFamily: "'Oswald', sans-serif" }}>FORMA</div>
+                  <SaludCoach student={student} onActualizado={async () => {
+                    const fresco = await safeGet(`student:${student.id}`);
+                    if (fresco) setStudent((previo) => fusionarLoDelReloj(previo, fresco));
+                  }} />
                 </div>
               )}
 
@@ -5644,7 +5647,7 @@ function MuroAnuncios({ esCoach, onLeido }) {
 // (los pagos primero).
 const PESTANAS_ALUMNO = [
   { id: "inicio", etiqueta: "Inicio", Icono: Home },
-  { id: "salud", etiqueta: "Salud", Icono: HeartPulse },
+  { id: "salud", etiqueta: "Forma", Icono: HeartPulse },
   { id: "semana", etiqueta: "Plan", Icono: Activity, centro: true },
   { id: "anuncios", etiqueta: "Anuncios", Icono: Megaphone },
   { id: "perfil", etiqueta: "Perfil", Icono: User },
@@ -5664,7 +5667,7 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
   // Vigencia del plan y pagos (una sola petición para Inicio y Pagos).
   const miPlan = useMyMembership();
   // Datos de salud del reloj (una sola petición para Inicio y Salud).
-  const { salud } = useSalud(studentId);
+  const { salud, recargar: recargarSalud } = useSalud(studentId);
   // Cuántas publicaciones del muro tiene sin leer: se mira al entrar y cada minuto.
   const [pendientesMuro, setPendientesMuro] = useState(0);
   useEffect(() => {
@@ -6012,7 +6015,8 @@ function StudentPortal({ studentId, refreshRoster, onBack }) {
       )}
 
       {student && pestana === "salud" && (
-        <SaludAlumno key={vueltaDePestana} student={student} salud={salud} onIrAPerfil={() => irA("perfil")} />
+        <SaludAlumno key={vueltaDePestana} student={student} salud={salud} onIrAPerfil={() => irA("perfil")}
+          onActualizado={async () => { await recargarSalud(); await reloadStudent(); }} />
       )}
 
       {pestana === "semana" && needsYesterdayConfirm && (

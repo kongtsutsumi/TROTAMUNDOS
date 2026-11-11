@@ -22,6 +22,8 @@ import { aceptoSalud } from "../../../lib/consentimiento.mjs";
 import { porDia, evaluarDia, ultimoDiaConDatos } from "../../../lib/recuperacion.mjs";
 import { compartiendoSalud } from "../../../lib/garmin.mjs";
 import { resumenSemanal, gruposDelEquipo } from "../../../lib/rendimiento.mjs";
+import { traerDeCoros } from "../../../lib/coros-servidor";
+import { traerDelReloj, traerSaludDeIntervals } from "../../../lib/intervals-pull";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -74,6 +76,27 @@ export async function POST(request) {
     const { estado, marca } = await estadoDe(student);
     const filas = estado === "ok" ? visibles(await leerSalud(studentId, { desde: haceDias(70), limite: 200 })) : [];
     return NextResponse.json({ ok: true, estado, marca, hoy: hoyEnLima(), filas });
+  }
+
+  // Botón "Actualizar" de la pestaña Forma: pide a la marca del reloj lo último que ya
+  // sincronizó (actividades y salud). Garmin no deja pedir: manda los datos solo, cuando el
+  // reloj sincroniza con Garmin Connect, así que ahí solo se recarga.
+  if (op === "actualizar") {
+    if (typeof studentId !== "string") return mal("Faltan datos");
+    const esElMismoAlumno = session.role === "student" && session.studentId === studentId;
+    const esCoach = session.role === "coach" && puedeManejar(session, await entradaDe(studentId));
+    if (!esElMismoAlumno && !esCoach) return mal("Sin permiso", 403);
+    const student = await kvGet(`student:${studentId}`);
+    if (!student) return mal("Alumno no encontrado", 404);
+    const marca = marcaDe(student);
+    let r = { ok: true, actualizadas: 0, salud: 0 };
+    if (marca === "coros") r = await traerDeCoros(student, { forzar: true });
+    else if (marca === "intervals") {
+      const s = await traerSaludDeIntervals(student, undefined, { forzar: true }).catch(() => ({ guardados: 0 }));
+      const a = await traerDelReloj(student, { minutosEntreLecturas: 1 }).catch(() => ({ ok: false }));
+      r = { ok: a.ok !== false, actualizadas: a.actualizadas || 0, extras: a.extras || 0, salud: s.guardados || 0 };
+    }
+    return NextResponse.json({ ok: r.ok !== false, marca, actualizadas: r.actualizadas || 0, extras: r.extras || 0, salud: r.salud || 0, motivo: r.motivo || null });
   }
 
   if (op === "equipo") {

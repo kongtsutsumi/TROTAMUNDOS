@@ -8,7 +8,7 @@
 //
 // Es solo para el entrenamiento: las pantallas lo dicen, y dicen de qué marca son los datos.
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Gauge, Moon, HeartPulse, Heart, ChevronRight, ChevronLeft, Watch, Info, TrendingUp, BarChart3, Wind, Target } from "lucide-react";
+import { Gauge, Moon, HeartPulse, Heart, ChevronRight, ChevronLeft, Watch, Info, TrendingUp, BarChart3, Wind, Target, RefreshCcw } from "lucide-react";
 import { rendimiento as calcularRendimiento, ritmoTexto, tiempoTexto, MARGEN_CALIDAD } from "../lib/rendimiento.mjs";
 import { COLORS } from "../lib/plan-engine.mjs";
 import { saludOp } from "../lib/storage";
@@ -346,7 +346,7 @@ function Detalle({ clave, calc, onVolver, tercero }) {
   return (
     <div className="space-y-3" data-testid={`detalle-${clave}`}>
       <button type="button" onClick={onVolver} data-testid="volver-salud" className="inline-flex items-center gap-1 text-sm font-medium" style={{ color: COLORS.track }}>
-        <ChevronLeft size={16} /> Salud
+        <ChevronLeft size={16} /> Forma
       </button>
       <div className="flex items-center gap-2.5">
         <info.Icono size={20} style={{ color: COLORS.textPrimary }} />
@@ -498,11 +498,43 @@ function Contenido({ salud, student, onIrAPerfil, esCoach, extra }) {
   );
 }
 
-// Pestaña Salud del alumno.
-export function SaludAlumno({ student, salud, onIrAPerfil }) {
+// Botón "Actualizar": pide a la marca del reloj lo último que ya sincronizó.
+function BotonActualizar({ studentId, marca, onListo, tercero }) {
+  const [estado, setEstado] = useState(null);
+  const actualizar = async () => {
+    setEstado({ cargando: true });
+    const r = await saludOp("actualizar", studentId);
+    await onListo?.();
+    const nuevas = (r?.actualizadas || 0) + (r?.extras || 0);
+    setEstado({
+      texto: !r?.ok ? "No se pudo consultar ahora. Prueba en un rato."
+        : r.marca === "garmin" ? "Garmin envía los datos solo cuando el reloj sincroniza con Garmin Connect. Ya tienes lo último que llegó."
+        : !r.marca ? null
+        : nuevas || r.salud ? `Listo${nuevas ? `: ${nuevas} actividad${nuevas === 1 ? "" : "es"} nueva${nuevas === 1 ? "" : "s"}` : ""}${r.salud ? `${nuevas ? " y" : ":"} ${r.salud} día${r.salud === 1 ? "" : "s"} de salud al día` : ""}.`
+        : su(tercero, "No hay nada nuevo. Sincroniza tu reloj con su app en el teléfono y vuelve a intentar.", "No hay nada nuevo en su reloj."),
+    });
+  };
+  if (!marca) return null;
+  return (
+    <div className="flex flex-col items-end">
+      <button type="button" onClick={actualizar} disabled={estado?.cargando} data-testid="actualizar-forma"
+        className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg"
+        style={{ background: COLORS.surface, color: COLORS.track, border: `1px solid ${COLORS.track}55`, opacity: estado?.cargando ? 0.6 : 1 }}>
+        <RefreshCcw size={12} className={estado?.cargando ? "animate-spin" : ""} /> {estado?.cargando ? "Actualizando…" : "Actualizar"}
+      </button>
+      {estado?.texto && <p className="text-[11px] mt-1.5 text-right max-w-xs" style={{ color: COLORS.textMuted }} data-testid="actualizar-aviso">{estado.texto}</p>}
+    </div>
+  );
+}
+
+// Pestaña Forma del alumno (recuperación y rendimiento).
+export function SaludAlumno({ student, salud, onIrAPerfil, onActualizado }) {
   return (
     <div data-testid="salud-alumno">
-      <h2 className="text-lg font-semibold mb-3 uppercase" style={{ ...OSWALD, color: COLORS.textPrimary }}>Salud</h2>
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <h2 className="text-lg font-semibold uppercase" style={{ ...OSWALD, color: COLORS.textPrimary }}>Forma</h2>
+        <BotonActualizar studentId={student?.id} marca={salud?.marca} onListo={onActualizado} />
+      </div>
       <Contenido salud={salud} student={student} onIrAPerfil={onIrAPerfil} />
       <Rendimiento student={student} salud={salud} />
     </div>
@@ -548,11 +580,14 @@ export function ResumenSalud({ salud, onAbrir }) {
   );
 }
 
-// Botón Salud del coach, dentro de cada alumno: el día y las últimas 4 semanas.
-export function SaludCoach({ student }) {
-  const { salud } = useSalud(student?.id);
+// Botón Forma del coach, dentro de cada alumno: el día y las últimas 4 semanas.
+export function SaludCoach({ student, onActualizado }) {
+  const { salud, recargar } = useSalud(student?.id);
   return (
     <div data-testid="salud-coach" style={{ maxWidth: 560 }}>
+      <div className="flex justify-end mb-3">
+        <BotonActualizar studentId={student?.id} marca={salud?.marca} tercero onListo={async () => { await recargar(); await onActualizado?.(); }} />
+      </div>
       <Contenido salud={salud} student={student} esCoach extra={(calc) => <Tendencia calc={calc} />} />
       <Rendimiento student={student} salud={salud} tercero />
     </div>
