@@ -3347,6 +3347,7 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
     setShowPanorama(false);
     setShowRitmos(false);
     setShowSalud(false);
+    setRevisionGarmin(null);
     setViewedWeek(null);
     setShowChangeGoal(false);
     setShowIntermediateRace(false);
@@ -3734,6 +3735,7 @@ function CoachDashboard({ roster: rosterProp, refreshRoster: refreshRosterProp, 
   // está guardado, esto solo lo empuja al reloj. Si falla, se dice por qué y no se toca nada.
   const [enviandoReloj, setEnviandoReloj] = useState(false);
   const [envioReloj, setEnvioReloj] = useState(null);
+  const [revisionGarmin, setRevisionGarmin] = useState(null);
   // Alertas de ritmo: se activan alumno por alumno. El antiguo interruptor general solo se
   // lee, como punto de partida de quien todavía no tiene nada elegido.
   const [alertasGeneral, setAlertasGeneral] = useState(false);
@@ -4728,6 +4730,29 @@ const resetPlan = async () => {
                       ? <><Check size={12} /> {envioReloj.enviados} sesiones enviadas · pueden tardar unos minutos en aparecer</>
                       : <><AlertCircle size={12} /> No se pudo enviar ({envioReloj.motivo}){envioReloj.detalle ? ` · Garmin respondió ${envioReloj.detalle.estado} al ${envioReloj.detalle.paso}: ${envioReloj.detalle.mensaje || "sin mensaje"}` : ""}</>}
                   </span>
+                )}
+                {student.garmin?.conectado && (
+                  <div className="w-full">
+                    <button type="button" className="underline text-xs" style={{ color: COLORS.textMuted }} data-testid="revisar-garmin"
+                      onClick={async () => { setRevisionGarmin({ cargando: true }); setRevisionGarmin(await garminOp("revisar", student.id)); }}>
+                      Revisar cómo quedó el próximo entrenamiento en Garmin
+                    </button>
+                    {revisionGarmin && (
+                      <div className="mt-2 rounded-lg p-3 text-xs" style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, color: COLORS.textMuted }}>
+                        {revisionGarmin.cargando ? "Consultando a Garmin…" : revisionGarmin.motivo === "sin-envios" ? "No hay entrenamientos futuros enviados a Garmin." : (
+                          <>
+                            <div data-testid="revision-garmin-resumen">
+                              {revisionGarmin.fecha} · pasos enviados: <b style={{ color: COLORS.lane }}>{revisionGarmin.pasosEnviados}</b> · pasos en Garmin: <b style={{ color: revisionGarmin.pasosEnGarmin ? COLORS.lane : COLORS.hard }}>{revisionGarmin.pasosEnGarmin ?? "—"}</b>
+                              {" "}· respuesta {revisionGarmin.estado} · ruta {revisionGarmin.ruta}
+                            </div>
+                            <details className="mt-1.5"><summary>Ver lo que guardó Garmin</summary>
+                              <pre className="whitespace-pre-wrap mt-1" style={{ fontSize: 10, maxHeight: 320, overflow: "auto" }}>{revisionGarmin.guardado || "(vacío)"}</pre>
+                            </details>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 )}
                 <div className="flex items-center gap-1.5">
                   <select value={reportWeekNum ?? activeWeekNum} onChange={(e) => setReportWeekNum(Number(e.target.value))}

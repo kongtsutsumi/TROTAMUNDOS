@@ -13,7 +13,7 @@ import { puedeManejar } from "../../../lib/equipo.mjs";
 import { estaConectado as intervalsConectado, leerAjustesReloj } from "../../../lib/intervals-push";
 import { alertasHabilitadasPorCoach, alertasEfectivas } from "../../../lib/intervals-icu.mjs";
 import { estaConectadoCoros } from "../../../lib/coros-servidor";
-import { estaConfigurado, estaConectadoGarmin, urlDeAutorizacion, enviarSemanaAGarmin, desconectarGarmin } from "../../../lib/garmin-servidor";
+import { estaConfigurado, estaConectadoGarmin, urlDeAutorizacion, enviarSemanaAGarmin, desconectarGarmin, revisarEnvio } from "../../../lib/garmin-servidor";
 import { leerConsentimiento } from "../../../lib/salud-servidor";
 import { aceptoEntrenamiento, resumen as resumenConsentimiento } from "../../../lib/consentimiento.mjs";
 
@@ -69,6 +69,11 @@ export async function POST(request) {
     const semana = Number(weekNum ?? student.currentWeek);
     if (!Number.isFinite(semana) || semana < 1) return mal("Semana inválida");
     return NextResponse.json(await enviarSemanaAGarmin(student, semana));
+  }
+
+  if (op === "revisar") {
+    if (!esCoach) return mal("Sin permiso", 403);
+    return NextResponse.json(await revisarEnvio(studentId));
   }
 
   if (op === "desconectar") {
