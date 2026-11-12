@@ -67,6 +67,9 @@ console.log("\n▸ Todos los tipos de calidad llegan con su estructura");
   // Pre-carga (series largas): también llegaba como un solo bloque.
   const b = G.sesionAWorkout({ ...base, paceKey: "broken" }, P.E, { alertas: true }).segments[0].steps;
   check("Pre-carga: series repetidas con 3' de trote", b.length === 3 && b[1].type === "WorkoutRepeatStep" && b[1].repeatValue >= 2 && b[1].steps[0].targetType === "PACE" && b[1].steps[1].durationValue === 180, JSON.stringify(b.map((x) => x.repeatValue || x.durationValue)));
+  // Pirámide (bloques de 1 repetición): pasos sueltos, sin "repetir 1 vez".
+  const pir = G.sesionAWorkout({ ...base, paceKey: "custom", customBlocks: [{ reps: 1, distKm: 1, paceStr: "4:20", recoveryMin: 2 }, { reps: 1, distKm: 0.8, paceStr: "4:15", recoveryMin: 2 }, { reps: 1, distKm: 0.6, paceStr: "4:10", recoveryMin: 2 }] }, P.E, { alertas: true }).segments[0].steps;
+  check("Pirámide: 7 pasos sueltos", pir.length === 7 && pir.every((x) => x.type === "WorkoutStep") && pir.map((x) => x.durationValue).join() === "2000,1000,120,800,120,600,2000", pir.map((x) => x.durationValue).join());
   // Ningún tipo de calidad debe quedar como un solo paso.
   for (const k of ["I", "R", "T", "brokenT", "fartlek", "hills", "combo1k500", "broken"]) {
     const w = G.sesionAWorkout({ ...base, paceKey: k }, P.E, { alertas: true });
