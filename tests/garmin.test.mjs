@@ -54,6 +54,26 @@ console.log("\n▸ El entrenamiento de Garmin");
   check("Nombre de la sesión", /Calidad · 11 km/.test(w.workoutName), w.workoutName);
 }
 
+console.log("\n▸ Todos los tipos de calidad llegan con su estructura");
+{
+  const P = E.computeTrainingPaces(45);
+  const base = { km: 12.5, type: "Calidad", easyPace: P.E, hmPace: P.HM, marathonPace: P.M, targetPace: P.T };
+  // Intervalos 1k + 500: antes llegaba al reloj como un solo bloque de 12 km.
+  const c = G.sesionAWorkout({ ...base, paceKey: "combo1k500" }, P.E, { alertas: true }).segments[0].steps;
+  check("1k + 500: calentamiento, 3 rondas y enfriamiento", c.length === 3 && c[0].intensity === "WARMUP" && c[2].intensity === "COOLDOWN", c.length);
+  check("1k + 500: la ronda se repite 3 veces con 4 pasos", c[1].type === "WorkoutRepeatStep" && c[1].repeatValue === 3 && c[1].steps.length === 4);
+  check("1k + 500: 1 km, 1', 500 m y 4'", c[1].steps.map((x) => x.durationValue).join() === "1000,60,500,240", c[1].steps.map((x) => x.durationValue).join());
+  check("1k + 500: intervalos con ritmo, recuperaciones sin", c[1].steps.map((x) => `${x.intensity}:${x.targetType}`).join() === "INTERVAL:PACE,RECOVERY:OPEN,INTERVAL:PACE,RECOVERY:OPEN");
+  // Pre-carga (series largas): también llegaba como un solo bloque.
+  const b = G.sesionAWorkout({ ...base, paceKey: "broken" }, P.E, { alertas: true }).segments[0].steps;
+  check("Pre-carga: series repetidas con 3' de trote", b.length === 3 && b[1].type === "WorkoutRepeatStep" && b[1].repeatValue >= 2 && b[1].steps[0].targetType === "PACE" && b[1].steps[1].durationValue === 180, JSON.stringify(b.map((x) => x.repeatValue || x.durationValue)));
+  // Ningún tipo de calidad debe quedar como un solo paso.
+  for (const k of ["I", "R", "T", "brokenT", "fartlek", "hills", "combo1k500", "broken"]) {
+    const w = G.sesionAWorkout({ ...base, paceKey: k }, P.E, { alertas: true });
+    check(`${k}: más de un paso`, w && w.segments[0].steps.length > 1, k);
+  }
+}
+
 console.log("\n▸ La semana y qué mandar");
 {
   const student = {
