@@ -185,3 +185,34 @@ export function PermisosDelReloj({ studentId, consentimiento, onCambio }) {
     </div>
   );
 }
+
+// Alertas de ritmo, en la tarjeta del reloj conectado (Garmin y COROS; intervals.icu tiene la
+// suya). Solo aparece si el coach las habilitó. Al cambiarla se guarda la ficha y el servidor
+// vuelve a mandar al reloj las sesiones que cambian (con o sin ritmo objetivo en cada paso).
+export function AlertasDeRitmo({ alertas, onAlertas, onCambio }) {
+  const [ocupado, setOcupado] = useState(false);
+  const [aviso, setAviso] = useState("");
+  if (!alertas?.habilitadas || !onAlertas) return null;
+  return (
+    <div className="rounded-lg p-3 mb-3" style={{ background: COLORS.bg, border: `1px solid ${COLORS.border}` }} data-testid="alertas-ritmo">
+      <label className="flex items-center justify-between gap-3 cursor-pointer">
+        <span>
+          <span className="block text-sm font-semibold" style={{ color: COLORS.textPrimary }}>Alertas de ritmo</span>
+          <span className="block text-xs mt-0.5" style={{ color: COLORS.textMuted }}>
+            Tu reloj te avisa si vas 5 segundos más rápido o más lento que el ritmo de cada bloque, en las sesiones de calidad y en los fondos.
+          </span>
+        </span>
+        <input type="checkbox" className="w-5 h-5 shrink-0" checked={!!alertas.activas} disabled={ocupado} data-testid="interruptor-alertas"
+          onChange={async (e) => {
+            const activar = e.target.checked;
+            setOcupado(true); setAviso("");
+            await onAlertas(activar);
+            await onCambio?.();
+            setOcupado(false);
+            setAviso(activar ? "Listo: tus entrenamientos se volvieron a enviar con los ritmos. Sincroniza tu reloj." : "Listo: tus entrenamientos se enviarán sin alertas de ritmo.");
+          }} />
+      </label>
+      {aviso && <p className="text-xs mt-2" style={{ color: COLORS.easy }}>{aviso}</p>}
+    </div>
+  );
+}

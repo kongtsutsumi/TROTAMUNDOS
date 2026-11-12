@@ -4726,7 +4726,7 @@ const resetPlan = async () => {
                     }}>
                     {envioReloj.ok
                       ? <><Check size={12} /> {envioReloj.enviados} sesiones enviadas · pueden tardar unos minutos en aparecer</>
-                      : <><AlertCircle size={12} /> No se pudo enviar ({envioReloj.motivo})</>}
+                      : <><AlertCircle size={12} /> No se pudo enviar ({envioReloj.motivo}){envioReloj.detalle ? ` · Garmin respondió ${envioReloj.detalle.estado} al ${envioReloj.detalle.paso}: ${envioReloj.detalle.mensaje || "sin mensaje"}` : ""}</>}
                   </span>
                 )}
                 <div className="flex items-center gap-1.5">
@@ -5152,7 +5152,7 @@ const resetPlan = async () => {
 // Elige la conexión: Garmin o COROS directos si están conectados; si no, la de intervals.icu
 // (que al conectar también ofrece Garmin y COROS directos, cuando están disponibles).
 function ConexionReloj(props) {
-  const { student, onCambio, onLectura } = props;
+  const { student, onCambio, onLectura, onAlertas } = props;
   const [garmin, setGarmin] = useState(null);
   const [coros, setCoros] = useState(null);
   const cargarMarcas = useCallback(async () => {
@@ -5177,10 +5177,10 @@ function ConexionReloj(props) {
   }, [cargarMarcas, onCambio]);
   if (!garmin || !coros) return <p className="text-sm" style={{ color: COLORS.textMuted }}>Consultando tu reloj…</p>;
   if (garmin.conectado) {
-    return <ConexionGarmin student={student} estado={garmin} onCambio={async () => { await cargarMarcas(); await onCambio?.(); }} />;
+    return <ConexionGarmin student={student} estado={garmin} onAlertas={onAlertas} onCambio={async () => { await cargarMarcas(); await onCambio?.(); }} />;
   }
   if (coros.conectado) {
-    return <ConexionCoros student={student} estado={coros} onLectura={onLectura}
+    return <ConexionCoros student={student} estado={coros} onLectura={onLectura} onAlertas={onAlertas}
       onCambio={async () => { await cargarMarcas(); await onCambio?.(); }} />;
   }
   return <ConexionIntervals key={vuelta} {...props} garminDisponible={!!garmin.disponible} corosDisponible={!!coros.disponible} />;

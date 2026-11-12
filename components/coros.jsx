@@ -6,7 +6,7 @@ import React, { useState } from "react";
 import { Activity, RefreshCcw } from "lucide-react";
 import { COLORS } from "../lib/plan-engine.mjs";
 import { corosOp } from "../lib/storage";
-import { PermisosDelReloj } from "./consentimiento";
+import { PermisosDelReloj, AlertasDeRitmo } from "./consentimiento";
 
 const fecha = (iso) => {
   const t = Date.parse(iso || "");
@@ -17,7 +17,7 @@ const dia = (f) => {
   return Number.isFinite(t) ? new Date(t).toLocaleDateString("es-PE", { weekday: "long", day: "numeric", month: "short" }) : f;
 };
 
-export function ConexionCoros({ student, estado, onCambio, onLectura }) {
+export function ConexionCoros({ student, estado, onCambio, onLectura, onAlertas }) {
   const [ocupado, setOcupado] = useState(false);
   const [confirmar, setConfirmar] = useState(false);
   const [trayendo, setTrayendo] = useState(false);
@@ -77,6 +77,7 @@ export function ConexionCoros({ student, estado, onCambio, onLectura }) {
         </div>
       )}
       <PermisosDelReloj studentId={student.id} consentimiento={estado?.consentimiento} onCambio={onCambio} />
+      <AlertasDeRitmo alertas={estado?.alertas} onAlertas={onAlertas} onCambio={onCambio} />
       <div className="flex flex-wrap items-center gap-2 mb-2">
         <button type="button" onClick={traer} disabled={trayendo} data-testid="coros-traer"
           className="flex items-center gap-1 text-xs px-2 py-1 rounded"

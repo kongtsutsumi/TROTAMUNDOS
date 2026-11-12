@@ -10,7 +10,8 @@ import { NextResponse } from "next/server";
 import { kvGet } from "../../../lib/supabaseAdmin";
 import { sesionDelPedido, entradaDe } from "../../../lib/equipo-servidor";
 import { puedeManejar } from "../../../lib/equipo.mjs";
-import { estaConectado as intervalsConectado } from "../../../lib/intervals-push";
+import { estaConectado as intervalsConectado, leerAjustesReloj } from "../../../lib/intervals-push";
+import { alertasHabilitadasPorCoach, alertasEfectivas } from "../../../lib/intervals-icu.mjs";
 import { estaConectadoCoros } from "../../../lib/coros-servidor";
 import { estaConfigurado, estaConectadoGarmin, urlDeAutorizacion, enviarSemanaAGarmin, desconectarGarmin } from "../../../lib/garmin-servidor";
 import { leerConsentimiento } from "../../../lib/salud-servidor";
@@ -45,6 +46,12 @@ export async function POST(request) {
       ultimaLectura: student.garmin?.ultimaLectura ?? null,
       intervalsConectado: intervalsConectado(student),
       consentimiento: resumenConsentimiento(await leerConsentimiento(studentId)),
+      // Alertas de ritmo: si el coach las habilitó (solo entonces el alumno puede tocarlas) y si
+      // están activas. Con alertas, cada paso de calidad y fondo va con su ritmo objetivo.
+      alertas: await (async () => {
+        const general = (await leerAjustesReloj()).alertasRitmo;
+        return { habilitadas: alertasHabilitadasPorCoach(student, general), activas: alertasEfectivas(student, general) };
+      })(),
     });
   }
 

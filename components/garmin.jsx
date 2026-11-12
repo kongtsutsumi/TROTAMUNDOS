@@ -5,14 +5,14 @@ import React, { useState } from "react";
 import { Activity } from "lucide-react";
 import { COLORS } from "../lib/plan-engine.mjs";
 import { garminOp } from "../lib/storage";
-import { PermisosDelReloj } from "./consentimiento";
+import { PermisosDelReloj, AlertasDeRitmo } from "./consentimiento";
 
 const fecha = (iso) => {
   const t = Date.parse(iso || "");
   return Number.isFinite(t) ? new Date(t).toLocaleString("es-PE", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
 };
 
-export function ConexionGarmin({ student, estado, onCambio }) {
+export function ConexionGarmin({ student, estado, onCambio, onAlertas }) {
   const [ocupado, setOcupado] = useState(false);
   const [confirmar, setConfirmar] = useState(false);
   const desconectar = async () => {
@@ -36,7 +36,13 @@ export function ConexionGarmin({ student, estado, onCambio }) {
           ? ` Último envío: semana ${envio.semana}, ${envio.enviados} sesi${envio.enviados === 1 ? "ón" : "ones"} (${fecha(envio.fecha)}).`
           : ` El último envío no salió (${envio.motivo}). Avísale a tu coach si no te aparecen.`)}
       </p>
+      {envio && !envio.ok && envio.detalle && (
+        <p className="text-[11px] mb-2 break-words" style={{ color: COLORS.moderate }} data-testid="garmin-detalle">
+          Garmin respondió {envio.detalle.estado} al {envio.detalle.paso} el entrenamiento: {envio.detalle.mensaje || "sin mensaje"}
+        </p>
+      )}
       <PermisosDelReloj studentId={student.id} consentimiento={estado?.consentimiento} onCambio={onCambio} />
+      <AlertasDeRitmo alertas={estado?.alertas} onAlertas={onAlertas} onCambio={onCambio} />
       {confirmar ? (
         <div className="flex flex-wrap gap-2 items-center">
           <span className="text-xs" style={{ color: COLORS.textMuted }}>
