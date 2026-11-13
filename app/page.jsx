@@ -1406,6 +1406,39 @@ function DatoDelReloj({ valor, etiqueta }) {
 /* Paso a paso: a cuánto hizo cada paso de una sesión con series. Arriba, siempre a la vista,
    el ritmo de cada repetición en una línea; al abrir, todos los pasos con su distancia, su
    tiempo, su ritmo y su pulso, junto a lo planificado. */
+// Panel del coach: qué permisos dio el alumno en Garmin Connect y qué actividades han llegado
+// (para saber si el km por km falta porque Garmin no las manda o porque no eran carrera).
+function RecibidoDeGarmin({ r }) {
+  const permisos = Array.isArray(r?.permisos) ? r.permisos : null;
+  const actividades = (r?.recibido || []).flatMap((x) => (x.actividades || []).map((a) => ({ ...a, cuando: x.cuando })));
+  const llegaronTipos = new Set((r?.recibido || []).flatMap((x) => Object.keys(x.tipos || {})));
+  const sinPermiso = permisos && !permisos.includes("ACTIVITY_EXPORT");
+  return (
+    <div className="mb-2 pb-2 space-y-1" style={{ borderBottom: `1px dashed ${COLORS.border}` }} data-testid="garmin-recibido">
+      <div>
+        Permisos en Garmin Connect: {permisos ? permisos.join(", ") || "ninguno" : "—"}
+        {sinPermiso && <b style={{ color: COLORS.hard }}> · no comparte actividades: debe activar «Actividades» en Garmin Connect (Configuración → Aplicaciones conectadas → TROTAMUNDOS)</b>}
+      </div>
+      {!actividades.length ? (
+        <div style={{ color: (r?.recibido || []).length ? COLORS.moderate : COLORS.textMuted }}>
+          {(r?.recibido || []).length
+            ? `Garmin ha mandado ${[...llegaronTipos].join(", ")}, pero ninguna actividad todavía.`
+            : "Todavía no hay registro de lo que manda Garmin (se empieza a anotar desde esta versión)."}
+        </div>
+      ) : (
+        <div>
+          <div>Últimas actividades que llegaron de Garmin:</div>
+          {actividades.slice(0, 6).map((a, i) => (
+            <div key={i} style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10 }}>
+              {a.fecha || "—"} · {a.deporte || "?"} · {a.km ?? "?"} km · {a.detalle ? `con detalle (${a.kms} km por km)` : "solo resumen"} · <b style={{ color: a.resultado === "guardada" ? COLORS.lane : COLORS.moderate }}>{a.resultado}</b>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PasoAPaso({ pa }) {
   const [ver, setVer] = useState(false);
   const pasos = Array.isArray(pa?.pasos) ? pa.pasos : [];
@@ -4739,6 +4772,7 @@ const resetPlan = async () => {
                     </button>
                     {revisionGarmin && (
                       <div className="mt-2 rounded-lg p-3 text-xs" style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, color: COLORS.textMuted }}>
+                        {!revisionGarmin.cargando && <RecibidoDeGarmin r={revisionGarmin} />}
                         {revisionGarmin.cargando ? "Consultando a Garmin…" : revisionGarmin.motivo === "sin-envios" ? "No hay entrenamientos futuros enviados a Garmin." : !revisionGarmin.sesiones ? `No se pudo revisar (${revisionGarmin.error || revisionGarmin.motivo || "error"}).` : (
                           <div className="space-y-2" data-testid="revision-garmin-resumen">
                             {revisionGarmin.sesiones.some((x) => !x.alDia) && (
