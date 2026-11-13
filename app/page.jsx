@@ -1417,8 +1417,21 @@ function RecibidoDeGarmin({ r }) {
     <div className="mb-2 pb-2 space-y-1" style={{ borderBottom: `1px dashed ${COLORS.border}` }} data-testid="garmin-recibido">
       <div>
         Permisos en Garmin Connect: {permisos ? permisos.join(", ") || "ninguno" : "—"}
+        {r?.permisosEnVivo === false && <span style={{ color: COLORS.moderate }}> · Garmin no respondió al consultarlos (respuesta {r?.permisosEstado}); es lo último guardado</span>}
         {sinPermiso && <b style={{ color: COLORS.hard }}> · no comparte actividades: debe activar «Actividades» en Garmin Connect (Configuración → Aplicaciones conectadas → TROTAMUNDOS)</b>}
       </div>
+      {(() => {
+        const avisos = r?.avisos || [];
+        if (!avisos.length) return <div style={{ color: COLORS.moderate }}>A la app no ha llegado ningún aviso de Garmin (de ningún alumno) desde esta versión.</div>;
+        const u = avisos[0];
+        const tiposTodos = [...new Set(avisos.flatMap((a) => Object.keys(a.tipos || {})))];
+        return (
+          <div>
+            Avisos de Garmin a la app (todos los alumnos): {avisos.length} recientes · último {u.cuando.slice(0, 16).replace("T", " ")} UTC · tipos: {tiposTodos.join(", ") || "—"}
+            {!tiposTodos.some((t) => /activit/i.test(t)) && <b style={{ color: COLORS.hard }}> · ninguno de actividades: revisa que «Activity Details» esté activado en el portal de Garmin</b>}
+          </div>
+        );
+      })()}
       {!actividades.length ? (
         <div style={{ color: (r?.recibido || []).length ? COLORS.moderate : COLORS.textMuted }}>
           {(r?.recibido || []).length
