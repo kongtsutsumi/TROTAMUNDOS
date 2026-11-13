@@ -4735,20 +4735,31 @@ const resetPlan = async () => {
                   <div className="w-full">
                     <button type="button" className="underline text-xs" style={{ color: COLORS.textMuted }} data-testid="revisar-garmin"
                       onClick={async () => { setRevisionGarmin({ cargando: true }); setRevisionGarmin(await garminOp("revisar", student.id)); }}>
-                      Revisar cómo quedó el próximo entrenamiento en Garmin
+                      Revisar cómo quedaron los próximos entrenamientos en Garmin
                     </button>
                     {revisionGarmin && (
                       <div className="mt-2 rounded-lg p-3 text-xs" style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, color: COLORS.textMuted }}>
-                        {revisionGarmin.cargando ? "Consultando a Garmin…" : revisionGarmin.motivo === "sin-envios" ? "No hay entrenamientos futuros enviados a Garmin." : (
-                          <>
-                            <div data-testid="revision-garmin-resumen">
-                              {revisionGarmin.fecha} · pasos enviados: <b style={{ color: COLORS.lane }}>{revisionGarmin.pasosEnviados}</b> · pasos en Garmin: <b style={{ color: revisionGarmin.pasosEnGarmin ? COLORS.lane : COLORS.hard }}>{revisionGarmin.pasosEnGarmin ?? "—"}</b>
-                              {" "}· respuesta {revisionGarmin.estado} · ruta {revisionGarmin.ruta}
-                            </div>
-                            <details className="mt-1.5"><summary>Ver lo que guardó Garmin</summary>
-                              <pre className="whitespace-pre-wrap mt-1" style={{ fontSize: 10, maxHeight: 320, overflow: "auto" }}>{revisionGarmin.guardado || "(vacío)"}</pre>
-                            </details>
-                          </>
+                        {revisionGarmin.cargando ? "Consultando a Garmin…" : revisionGarmin.motivo === "sin-envios" ? "No hay entrenamientos futuros enviados a Garmin." : !revisionGarmin.sesiones ? `No se pudo revisar (${revisionGarmin.error || revisionGarmin.motivo || "error"}).` : (
+                          <div className="space-y-2" data-testid="revision-garmin-resumen">
+                            {revisionGarmin.sesiones.some((x) => !x.alDia) && (
+                              <div style={{ color: COLORS.hard }}>Hay sesiones con una versión anterior en Garmin: presiona «Enviar al reloj» para actualizarlas.</div>
+                            )}
+                            {revisionGarmin.sesiones.map((x) => {
+                              const bien = x.alDia && x.pasosEnGarmin === x.pasosQueCorresponden;
+                              return (
+                                <div key={x.workoutId} data-testid="revision-garmin-sesion">
+                                  <div>
+                                    <b style={{ color: COLORS.lane }}>{x.fecha}</b> · {x.nombre} · pasos en Garmin: <b style={{ color: bien ? COLORS.lane : COLORS.hard }}>{x.pasosEnGarmin ?? "—"}</b> de {x.pasosQueCorresponden}
+                                    {" "}· {x.alDia ? "al día" : <b style={{ color: COLORS.hard }}>versión anterior</b>}
+                                    {x.creado ? ` · enviado ${x.creado.slice(0, 16).replace("T", " ")}` : ""}{x.estado !== 200 ? ` · respuesta ${x.estado}` : ""}
+                                  </div>
+                                  <details className="mt-0.5"><summary>Ver lo que guardó Garmin</summary>
+                                    <pre className="whitespace-pre-wrap mt-1" style={{ fontSize: 10, maxHeight: 320, overflow: "auto" }}>{x.guardado || "(vacío)"}</pre>
+                                  </details>
+                                </div>
+                              );
+                            })}
+                          </div>
                         )}
                       </div>
                     )}
