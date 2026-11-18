@@ -1422,11 +1422,23 @@ function RecibidoDeGarmin({ r }) {
       </div>
       {(() => {
         const avisos = r?.avisos || [];
-        if (!avisos.length) return <div style={{ color: COLORS.moderate }}>A la app no ha llegado ningún aviso de Garmin (de ningún alumno) desde esta versión.</div>;
+        const llegadas = r?.llegadas || [];
+        const conClave = llegadas.filter((l) => l.claveOk);
+        const sinClave = llegadas.filter((l) => !l.claveOk);
+        const lineaLlegadas = (
+          <div>
+            Llamadas a la dirección de avisos: {llegadas.length ? `${llegadas.length} recientes · última ${llegadas[0].cuando.slice(0, 16).replace("T", " ")} UTC` : "ninguna"}
+            {sinClave.length > 0 && <b style={{ color: COLORS.hard }}> · {sinClave.length} con la clave equivocada: la dirección en el portal de Garmin no tiene la misma clave que GARMIN_WEBHOOK_SECRET en Vercel</b>}
+            {!llegadas.length && <b style={{ color: COLORS.hard }}> · Garmin no está llamando a la app: revisa en el portal de Garmin que los avisos estén activados y apunten a https://app.trotamundos.pe/api/garmin/webhook?k=…</b>}
+            {conClave.length > 0 && !avisos.length && <span style={{ color: COLORS.moderate }}> · llegan con la clave correcta ({[...new Set(conClave.flatMap((l) => l.tipos || []))].join(", ") || "sin datos"}) pero no se pudieron procesar</span>}
+          </div>
+        );
+        if (!avisos.length) return <>{lineaLlegadas}<div style={{ color: COLORS.moderate }}>A la app no ha llegado ningún aviso de Garmin (de ningún alumno) desde esta versión.</div></>;
         const u = avisos[0];
         const tiposTodos = [...new Set(avisos.flatMap((a) => Object.keys(a.tipos || {})))];
         return (
           <div>
+            {lineaLlegadas}
             Avisos de Garmin a la app (todos los alumnos): {avisos.length} recientes · último {u.cuando.slice(0, 16).replace("T", " ")} UTC · tipos: {tiposTodos.join(", ") || "—"}
             {!tiposTodos.some((t) => /activit/i.test(t)) && <b style={{ color: COLORS.hard }}> · ninguno de actividades: revisa que «Activity Details» esté activado en el portal de Garmin</b>}
           </div>

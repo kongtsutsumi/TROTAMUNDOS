@@ -11,7 +11,7 @@
 // correcta: un aviso mal formado no tiene arreglo reintentándolo.
 import { NextResponse } from "next/server";
 import crypto from "crypto";
-import { procesarPush } from "../../../../lib/garmin-servidor";
+import { procesarPush, anotarLlegada } from "../../../../lib/garmin-servidor";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -24,9 +24,13 @@ function claveCorrecta(k) {
 
 export async function POST(request) {
   const k = new URL(request.url).searchParams.get("k");
-  if (!claveCorrecta(k)) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
+  const claveOk = claveCorrecta(k);
   let cuerpo = null;
-  try { cuerpo = await request.json(); } catch (e) { return NextResponse.json({ ok: true, ignorado: "cuerpo-invalido" }); }
+  try { cuerpo = await request.json(); } catch (e) { /* se anota abajo */ }
+  const tipos = cuerpo && typeof cuerpo === "object" && !Array.isArray(cuerpo) ? Object.keys(cuerpo) : [];
+  await anotarLlegada({ claveOk, tipos: claveOk ? tipos : [], error: cuerpo ? null : "cuerpo-invalido" });
+  if (!claveOk) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
+  if (!cuerpo) return NextResponse.json({ ok: true, ignorado: "cuerpo-invalido" });
   const tope = new Promise((res) => setTimeout(() => res({ tope: true }), 20000));
   const informe = await Promise.race([procesarPush(cuerpo).catch((e) => ({ error: e?.message || "error" })), tope]);
   return NextResponse.json({ ok: true, ...informe });
