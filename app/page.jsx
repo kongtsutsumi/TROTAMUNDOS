@@ -1429,7 +1429,7 @@ function RecibidoDeGarmin({ r }) {
           <div>
             Llamadas a la dirección de avisos: {llegadas.length ? `${llegadas.length} recientes · última ${llegadas[0].cuando.slice(0, 16).replace("T", " ")} UTC` : "ninguna"}
             {sinClave.length > 0 && <b style={{ color: COLORS.hard }}> · {sinClave.length} con la clave equivocada: la dirección en el portal de Garmin no tiene la misma clave que GARMIN_WEBHOOK_SECRET en Vercel</b>}
-            {!llegadas.length && <b style={{ color: COLORS.hard }}> · Garmin no está llamando a la app: revisa en el portal de Garmin que los avisos estén activados y apunten a https://app.trotamundos.pe/api/garmin/webhook?k=…</b>}
+            {!llegadas.length && <b style={{ color: COLORS.hard }}> · Garmin no está llamando a la app: revisa en el portal de Garmin que los avisos estén activados y apunten a {"https://app.trotamundos.pe/api/garmin/webhook/<clave>"}</b>}
             {conClave.length > 0 && !avisos.length && <span style={{ color: COLORS.moderate }}> · llegan con la clave correcta ({[...new Set(conClave.flatMap((l) => l.tipos || []))].join(", ") || "sin datos"}) pero no se pudieron procesar</span>}
           </div>
         );
