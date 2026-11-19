@@ -1456,6 +1456,8 @@ function RecibidoDeGarmin({ r }) {
           {actividades.slice(0, 6).map((a, i) => (
             <div key={i} style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10 }}>
               {a.fecha || "—"} · {a.deporte || "?"} · {a.km ?? "?"} km · {a.detalle ? `con detalle (${a.kms} km por km)` : "solo resumen"} · <b style={{ color: a.resultado === "guardada" ? COLORS.lane : COLORS.moderate }}>{a.resultado}</b>
+              {a.detalle && <> · vueltas de Garmin: {a.vueltasGarmin ?? "?"}{a.pasoAPaso ? ` · paso a paso ${a.pasoAPaso}` : ""}</>}
+              {a.detalle && Array.isArray(a.vueltas) && a.vueltas.length > 0 && <div style={{ opacity: 0.8 }}>{a.vueltas.map(([m, s]) => `${m ?? "?"} m/${s ?? "?"} s`).join(" · ")}</div>}
             </div>
           ))}
         </div>

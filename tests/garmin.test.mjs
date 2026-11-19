@@ -77,6 +77,47 @@ console.log("\n▸ Todos los tipos de calidad llegan con su estructura");
   }
 }
 
+console.log("\n▸ Paso a paso de una sesión hecha desde el reloj (4 x 1 km, 3' de recuperación)");
+{
+  const P = E.computeTrainingPaces(45);
+  const day = { paceKey: "I", km: 11, repsOverride: 4, type: "Intervalos", easyPace: 6.27, hmPace: P.HM, marathonPace: P.M, targetPace: P.T };
+  // Lo que corrió (como en Garmin Connect): calentamiento 3 km a 5:53, 4 x (1 km ~4:25 +
+  // 3' a 5:35) y enfriamiento 2 km a 5:18. La primera repetición tiene un bajón de 15" y el
+  // enfriamiento un tirón de 48".
+  const tramos = [[3000, 5 + 53 / 60, true]];
+  for (let r = 0; r < 4; r++) {
+    if (r === 0) tramos.push([280, 4 + 22 / 60, true], [50, 5.25, false], [670, 4 + 31 / 60, false]);
+    else tramos.push([1000, 4 + 25 / 60, true]);
+    tramos.push([540, 3 / 0.54, true]);
+  }
+  tramos.push([1000, 5.3, true], [160, 5.1, false], [840, 5.3, false]);
+  const inicio = 1795000000, samples = [], laps = [];
+  let t = 0, d = 0;
+  for (const [metros, ritmo, nuevaVuelta] of tramos) {
+    if (nuevaVuelta) laps.push({ startTimeInSeconds: inicio + t });
+    const vel = 1000 / (ritmo * 60);
+    const fin = d + metros;
+    while (d < fin - 1e-6) {
+      t += 1; d = Math.min(fin, d + vel);
+      // Garmin no pone la distancia en todas las muestras (acá, una de cada 7 va sin ella).
+      samples.push({ startTimeInSeconds: inicio + t, ...(t % 7 ? { totalDistanceInMeters: d } : {}), timerDurationInSeconds: t, clockDurationInSeconds: t, movingDurationInSeconds: t, speedMetersPerSecond: vel, heartRate: 150 });
+    }
+  }
+  // Las vueltas del calentamiento/repeticiones agrupan los tramos en los pasos del reloj.
+  const lapsReloj = [laps[0], laps[1], laps[2], laps[3], laps[4], laps[5], laps[6], laps[7], laps[8], laps[9]];
+  const det = { activityId: 999, summary: { activityType: "RUNNING", startTimeInSeconds: inicio, startTimeOffsetInSeconds: -18000, durationInSeconds: t, distanceInMeters: d }, samples, laps: lapsReloj };
+  const c = G.actividadDesdeGarmin(det);
+  check("Vueltas con km aunque falte la distancia en algunas muestras", c.vueltas.length === 10 && c.vueltas.every((v) => v.distance > 0), JSON.stringify(c.vueltas.map((v) => v.distance)));
+  const res = resumenDeActividad(c.actividad, c.vueltas, kmPorKm(c.streams));
+  const pa = pasoAPaso({ vueltas: res.vueltas, streams: c.streams }, day, 6.27);
+  check("Paso a paso por las vueltas del reloj", pa?.origen === "vueltas" && pa.coincide && pa.pasos.length === 10, JSON.stringify(pa && [pa.origen, pa.pasos.map((x) => x.nombre)]));
+  // Sin vueltas (un reloj sin entrenamiento cargado): por el ritmo, la repetición partida se
+  // une y el tirón del enfriamiento no cuenta como repetición.
+  const pa2 = pasoAPaso({ vueltas: [], streams: c.streams }, day, 6.27);
+  const reps = pa2?.pasos.filter((x) => x.trabajo) || [];
+  check("Por ritmo: 4 repeticiones de ~1 km", pa2?.coincide && reps.length === 4 && reps.every((x) => x.km >= 0.9 && x.km <= 1.1), JSON.stringify(pa2 && pa2.pasos.map((x) => [x.nombre, x.km])));
+}
+
 console.log("\n▸ La semana y qué mandar");
 {
   const student = {
