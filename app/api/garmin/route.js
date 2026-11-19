@@ -7,7 +7,8 @@
 // la vez intervals.icu conectado: con las dos, el reloj recibiría cada entrenamiento dos
 // veces.
 import { NextResponse } from "next/server";
-import { kvGet } from "../../../lib/supabaseAdmin";
+import { kvGet, kvSet } from "../../../lib/supabaseAdmin";
+import { leerVueltasEscritas, corregirConVueltas } from "../../../lib/intervals-read.mjs";
 import { sesionDelPedido, entradaDe } from "../../../lib/equipo-servidor";
 import { puedeManejar } from "../../../lib/equipo.mjs";
 import { estaConectado as intervalsConectado, leerAjustesReloj } from "../../../lib/intervals-push";
@@ -74,6 +75,26 @@ export async function POST(request) {
   if (op === "revisar") {
     if (!esCoach) return mal("Sin permiso", 403);
     return NextResponse.json(await revisarEnvio(studentId));
+  }
+
+  // El coach corrige las vueltas de una sesión ya leída (copiadas de la app de la marca) y
+  // se rehace el paso a paso. El bloque del reloj lo escribe solo el servidor: por eso va acá
+  // y no por el guardado normal de la ficha.
+  if (op === "corregir-vueltas") {
+    if (!esCoach) return mal("Sin permiso", 403);
+    const { semana, dia, texto } = body || {};
+    const sem = student.weeks?.[semana];
+    const day = sem?.plan?.[dia];
+    const entrada = sem?.log?.[dia];
+    if (!day || !entrada?.reloj) return mal("Esa sesión no tiene datos del reloj.");
+    const { vueltas, malas } = leerVueltasEscritas(texto);
+    if (malas.length) return mal(`No se entienden las líneas ${malas.join(", ")}. Cada línea: tiempo y km (por ejemplo «4:31.4 1.00»).`);
+    const r = corregirConVueltas(entrada.reloj, vueltas, day, student.paces?.E ?? null);
+    if (!r.ok) return mal(r.motivo);
+    const log = sem.log.map((l, i) => (i === Number(dia) ? { ...l, reloj: r.reloj } : l));
+    const actualizado = { ...student, weeks: { ...student.weeks, [semana]: { ...sem, log } } };
+    await kvSet(`student:${studentId}`, actualizado);
+    return NextResponse.json({ ok: true, reloj: r.reloj });
   }
 
   if (op === "desconectar") {

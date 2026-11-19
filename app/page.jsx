@@ -1533,8 +1533,11 @@ function PasoAPaso({ pa }) {
   );
 }
 
-function DatosDelReloj({ reloj, day, esCoach, titulo = "Del reloj" }) {
+function DatosDelReloj({ reloj, day, esCoach, titulo = "Del reloj", onCorregirVueltas }) {
   const [verVueltas, setVerVueltas] = useState(false);
+  const [corrigiendo, setCorrigiendo] = useState(false);
+  const [textoVueltas, setTextoVueltas] = useState("");
+  const [estadoCorreccion, setEstadoCorreccion] = useState(null);
   const [verKms, setVerKms] = useState(false);
   if (!reloj) return null;
 
@@ -1671,6 +1674,39 @@ function DatosDelReloj({ reloj, day, esCoach, titulo = "Del reloj" }) {
           )}
         </>
       )}
+      {esCoach && onCorregirVueltas && (
+        <div className="mt-2">
+          {!corrigiendo ? (
+            <button onClick={() => { setCorrigiendo(true); setEstadoCorreccion(null); }} className="text-[11px] underline" style={{ color: COLORS.textMuted }} data-testid="corregir-vueltas">
+              {reloj.corregido ? "Vueltas corregidas por el coach · corregir de nuevo" : "Corregir vueltas"}
+            </button>
+          ) : (
+            <div className="rounded-lg p-2 space-y-2" style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}` }}>
+              <div className="text-[11px]" style={{ color: COLORS.textMuted }}>
+                Copia las vueltas como las muestra la app del reloj (en Garmin Connect, la pestaña Intervalos): una por línea, el tiempo y los km. Por ejemplo: <span style={{ fontFamily: "'JetBrains Mono', monospace" }}>4:31.4 1.00</span>. El pulso de cada vuelta se saca de lo que ya llegó.
+              </div>
+              <textarea value={textoVueltas} onChange={(e) => setTextoVueltas(e.target.value)} rows={8} data-testid="corregir-vueltas-texto"
+                className="w-full rounded px-2 py-1 text-xs" style={{ background: COLORS.bg, color: COLORS.lane, border: `1px solid ${COLORS.border}`, fontFamily: "'JetBrains Mono', monospace" }}
+                placeholder={"17:40.6 3.00\n4:31.4 1.00\n3:00.0 0.53\n…"} />
+              <div className="flex gap-2 items-center flex-wrap">
+                <button disabled={estadoCorreccion?.cargando || !textoVueltas.trim()} data-testid="corregir-vueltas-guardar"
+                  onClick={async () => {
+                    setEstadoCorreccion({ cargando: true });
+                    const r = await onCorregirVueltas(textoVueltas);
+                    if (r?.ok) { setEstadoCorreccion({ ok: true }); setCorrigiendo(false); setTextoVueltas(""); }
+                    else setEstadoCorreccion({ error: r?.motivo || r?.error || "No se pudo corregir." });
+                  }}
+                  className="text-xs px-3 py-1 rounded font-semibold" style={{ background: COLORS.track, color: COLORS.lane }}>
+                  {estadoCorreccion?.cargando ? "Corrigiendo…" : "Rehacer el paso a paso"}
+                </button>
+                <button onClick={() => setCorrigiendo(false)} className="text-xs" style={{ color: COLORS.textMuted }}>Cancelar</button>
+                {estadoCorreccion?.error && <span className="text-[11px]" style={{ color: COLORS.hard }} data-testid="corregir-vueltas-error">{estadoCorreccion.error}</span>}
+              </div>
+            </div>
+          )}
+          {estadoCorreccion?.ok && <div className="text-[11px] mt-1" style={{ color: COLORS.easy }} data-testid="corregir-vueltas-ok">Listo: el paso a paso se rehízo con las vueltas.</div>}
+        </div>
+      )}
     </div>
   );
 }
@@ -1733,7 +1769,7 @@ function NumField({ value, min = 0, max = null, onCommit, className, style, step
 
 // lapLibre: { activo, onToggle } cuando esta sesión puede llevar calentamiento y
 // enfriamiento libres en el reloj (el coach se lo permitió al alumno y es de calidad).
-function LapCard({ day: dayRaw, index, mode, log, onChangeDay, onChangeLog, isToday, isRaceGoal, onStartLive, onSwapDay, onMoveSession, esCoach, extras, lapLibre }) {
+function LapCard({ day: dayRaw, index, mode, log, onChangeDay, onChangeLog, isToday, isRaceGoal, onStartLive, onSwapDay, onMoveSession, esCoach, extras, lapLibre, onCorregirVueltas }) {
   // Un día puede faltar en planes guardados por versiones anteriores; se trata como descanso
   // en vez de tumbar la pantalla completa del alumno.
   const day = dayRaw || { day: DAYS[index] ?? "", type: "Descanso", paceKey: "", km: 0 };
@@ -2116,7 +2152,7 @@ function LapCard({ day: dayRaw, index, mode, log, onChangeDay, onChangeLog, isTo
           )}
           {!isRest && <div className="mt-2"><SessionBarChart day={day} /></div>}
           {!isRest && <SessionDetail segments={detail} />}
-          {!isRest && <DatosDelReloj reloj={log?.reloj} day={day} esCoach={esCoach} />}
+          {!isRest && <DatosDelReloj reloj={log?.reloj} day={day} esCoach={esCoach} onCorregirVueltas={onCorregirVueltas && log?.reloj ? (texto) => onCorregirVueltas(index, texto) : undefined} />}
           <SalidasAdicionales extras={extras} esCoach={esCoach} />
 
           {mode === "log" && !isRest && (
@@ -4719,6 +4755,14 @@ const resetPlan = async () => {
               })()}
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
                 {week.plan.map((d, i) => <LapCard key={i} day={d} index={i} mode={isViewingLive ? "edit" : "view"} log={week.log[i]} esCoach extras={extrasDelDia(week, i, student, activeWeekNum)} onChangeDay={updateDay} onSwapDay={isViewingLive ? swapDays : undefined}
+                  onCorregirVueltas={async (dia, texto) => {
+                    const r = await garminOp("corregir-vueltas", student.id, { semana: activeWeekNum, dia, texto });
+                    if (r?.ok && r.reloj) setStudent((s) => {
+                      const sem = s.weeks[activeWeekNum];
+                      return { ...s, weeks: { ...s.weeks, [activeWeekNum]: { ...sem, log: sem.log.map((l, k) => (k === dia ? { ...l, reloj: r.reloj } : l)) } } };
+                    });
+                    return r;
+                  }}
                   lapLibre={isViewingLive ? lapLibrePara(student, d, () => updateDay(i, { ...d, calentamientoLibre: !d.calentamientoLibre })) : undefined} />)}
               </div>
               <div className="flex flex-wrap gap-2">

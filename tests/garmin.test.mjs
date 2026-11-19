@@ -4,7 +4,7 @@
 
 import * as G from "../lib/garmin.mjs";
 import * as E from "../lib/plan-engine.mjs";
-import { resumenDeActividad, kmPorKm, pasoAPaso } from "../lib/intervals-read.mjs";
+import { resumenDeActividad, kmPorKm, pasoAPaso, leerVueltasEscritas, corregirConVueltas } from "../lib/intervals-read.mjs";
 
 let passed = 0, failed = 0;
 const failures = [];
@@ -116,6 +116,28 @@ console.log("\n▸ Paso a paso de una sesión hecha desde el reloj (4 x 1 km, 3'
   const pa2 = pasoAPaso({ vueltas: [], streams: c.streams }, day, 6.27);
   const reps = pa2?.pasos.filter((x) => x.trabajo) || [];
   check("Por ritmo: 4 repeticiones de ~1 km", pa2?.coincide && reps.length === 4 && reps.every((x) => x.km >= 0.9 && x.km <= 1.1), JSON.stringify(pa2 && pa2.pasos.map((x) => [x.nombre, x.km])));
+}
+
+console.log("\n▸ El coach corrige las vueltas de una sesión ya leída");
+{
+  const P = E.computeTrainingPaces(45);
+  const day = { paceKey: "I", km: 11, repsOverride: 4, type: "Intervalos", easyPace: 6.27, hmPace: P.HM, marathonPace: P.M, targetPace: P.T };
+  const s = (m, ss) => m * 60 + ss;
+  // La lectura que había quedado mal (por ritmo): 6 tramos rápidos, con su pulso.
+  const viejos = [[3.01, s(17, 44), 133], [0.28, s(1, 14), 158], [0.05, 15, 175], [0.65, s(2, 56), 174], [0.49, s(2, 50), 154], [1.02, s(4, 35), 167], [0.55, s(3, 4), 156], [1.02, s(4, 29), 171], [0.53, s(2, 56), 158], [1.01, s(4, 18), 174], [1.38, s(7, 18), 158], [0.16, 48, 161], [1.02, s(5, 32), 157]]
+    .map(([km, seg, fc]) => ({ km, seg, segTotal: seg, fc }));
+  const reloj = { km: 11.17, min: 58, fcMedia: 154, pasos: { origen: "series", coincide: false, pasos: viejos } };
+  const texto = "17:40.6 3.00\n4:31.4 1.00\n3:00.0 0.53\n4:31,6 1,00\n3:00.0 0.54\n4:22.5 1.00\n3:00.0 0.55\n4:15.4 1.00\n3:00.0 0.55\n10:37.5 2.00\n";
+  const { vueltas, malas } = leerVueltasEscritas(texto);
+  check("Lee las vueltas escritas (punto o coma)", malas.length === 0 && vueltas.length === 10 && vueltas[3].seg === 271.6 && vueltas[3].km === 1);
+  check("Avisa las líneas que no entiende", leerVueltasEscritas("4:31 1\nhola\n3:00").malas.join() === "2,3");
+  const r = corregirConVueltas(reloj, vueltas, day, 6.27);
+  check("Rehace el paso a paso por vueltas", r.ok && r.reloj.pasos.origen === "vueltas" && r.reloj.pasos.coincide && r.reloj.pasos.pasos.length === 10, JSON.stringify(r).slice(0, 200));
+  const rep = r.reloj?.pasos.pasos.filter((x) => x.trabajo) || [];
+  check("Repeticiones con su ritmo y el pulso de lo que ya había llegado", rep.map((x) => x.ritmo).join() === "4:31,4:32,4:23,4:15" && rep.every((x) => x.fc >= 160 && x.fc <= 176), JSON.stringify(rep));
+  check("Queda marcada como corregida y conserva lo demás", !!r.reloj.corregido && r.reloj.fcMedia === 154 && r.reloj.km === 11.17);
+  check("No acepta vueltas que no suman la salida", !corregirConVueltas(reloj, vueltas.slice(0, 9), day, 6.27).ok);
+  check("No acepta vueltas que no calzan con el plan", !corregirConVueltas(reloj, [{ seg: 1800, km: 5.5 }, { seg: 1680, km: 5.67 }], day, 6.27).ok);
 }
 
 console.log("\n▸ La semana y qué mandar");
