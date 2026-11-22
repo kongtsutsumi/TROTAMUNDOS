@@ -44,7 +44,7 @@ console.log("▸ Entrenamiento → course");
   check("Sin alertas: el ritmo va en el texto, no como objetivo", repSin.intensityType === undefined && /Repetición 1\.2 km \(ritmo 4:55\/km\)/.test(sinLibre.courseDescription), sinLibre.courseDescription);
 
   const f = C.sesionACourse(fondo, easy);
-  check("Fondo: una sección de 16 km", f.sections.length === 1 && f.sections[0].targetValue === 16000 && f.sections[0].sectionType === 2);
+  check("Fondo: calentamiento, bloque y enfriamiento (16 km)", f.sections.length === 3 && f.sections.reduce((a, x) => a + x.targetValue, 0) === 16000 && f.sections[0].sectionType === 1 && f.sections[1].sectionType === 2 && f.sections[2].sectionType === 4, JSON.stringify(f.sections.map((x) => [x.sectionType, x.targetValue])));
   check("Descanso: nada", C.sesionACourse({ paceKey: "" }, easy) === null);
 
   const muchas = C.sesionACourse({ ...calidad, customBlocks: [{ reps: 25, distKm: 0.2, paceStr: "4:00", recoveryMin: 1 }] }, easy);
@@ -217,6 +217,16 @@ console.log("▸ Al desconectar: fuera el detalle de COROS");
   check("Otras salidas no se tocan", s.weeks[1].extras[1].km === 3 && s.weeks[1].extras[1].retirado === undefined);
   check("Una segunda vez no cambia nada", C.sinDetalleDeCoros(s).cambios === 0);
   check("El original no se modifica", student.weeks[1].log[0].reloj === reloj);
+}
+
+console.log("▸ Calendario de COROS: idInPlan de cada sesión");
+{
+  const texto = (t) => ({ content: [{ type: "text", text: t }] });
+  const enJson = C.entradasDelCalendario(texto(JSON.stringify(JSON.stringify({ data: [{ happenDay: "20261120", programs: [{ idInPlan: 55, name: "Rodaje · 8 km" }] }] }))));
+  check("JSON (como texto entre comillas)", enJson.length === 1 && enJson[0].idInPlan === "55" && enJson[0].fecha === "2026-11-20" && enJson[0].nombre === "Rodaje · 8 km", JSON.stringify(enJson));
+  const enTexto = C.entradasDelCalendario(texto("2026-11-20\n- Rodaje · 8 km (idInPlan: 77)\n2026-11-21\n- Fondo · 18 km (idInPlan: 78)"), ["Rodaje · 8 km", "Fondo · 18 km"]);
+  check("Texto: cada nombre con su idInPlan y fecha", enTexto.map((x) => `${x.nombre}|${x.idInPlan}|${x.fecha}`).join() === "Rodaje · 8 km|77|2026-11-20,Fondo · 18 km|78|2026-11-21", JSON.stringify(enTexto));
+  check("Sin idInPlan en la respuesta: nada", C.entradasDelCalendario(texto("20261120: Rodaje · 8 km"), ["Rodaje · 8 km"]).length === 0);
 }
 
 console.log(`\n${passed} pruebas OK, ${failed} fallidas.`);

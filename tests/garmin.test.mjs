@@ -49,7 +49,7 @@ console.log("\n▸ El entrenamiento de Garmin");
   check("Las series siguen por distancia", wl.segments[0].steps[1].steps[0].durationType === "DISTANCE");
 
   const wf = G.sesionAWorkout(fondo, easy);
-  check("Un fondo es un paso de 16 km", wf && wf.segments[0].steps.some((x) => x.durationValue === 16000), JSON.stringify(wf?.segments[0].steps.map((x) => x.durationValue)));
+  check("Un fondo llega como calentamiento + bloque + enfriamiento (16 km)", wf && wf.segments[0].steps.map((x) => x.intensity).join() === "WARMUP,ACTIVE,COOLDOWN" && wf.segments[0].steps.reduce((a, x) => a + x.durationValue, 0) === 16000, JSON.stringify(wf?.segments[0].steps.map((x) => x.durationValue)));
   check("Un descanso no se manda", G.sesionAWorkout({ paceKey: "", km: 0 }, easy) === null);
   check("Nombre de la sesión", /Calidad · 11 km/.test(w.workoutName), w.workoutName);
 }

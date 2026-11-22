@@ -760,7 +760,9 @@ console.log("\n▸ Tipo de cada paso en el reloj");
   const rw = IC.sesionATexto({ paceKey: "E", km: 6, runWalk: true, easyPace: 6.5 }, 6.5, {});
   check("Run/walk: el trote es carrera y la caminata recuperación", /^- Trote.* intensity=active$/m.test(rw) && /^- Caminata.* intensity=recover$/m.test(rw), rw);
   const fondo = IC.sesionATexto({ paceKey: "long", slot: "long", km: 16, easyPace: 6.5 }, 6.5, {});
-  check("Un fondo continuo no lleva tipo (carrera)", !/intensity=/.test(fondo), fondo);
+  check("Un fondo llega con calentamiento, bloque y enfriamiento", /^- Warm-up.* 3km intensity=warmup$/m.test(fondo) && /^- Bloque principal.* 11km$/m.test(fondo) && /^- Cool-down.* 2km intensity=cooldown$/m.test(fondo), fondo);
+  const fondoFijado = IC.sesionATexto({ paceKey: "long", slot: "long", km: 22, easyPace: 5.37, marathonPace: 4.1, longOverrides: { warmKm: 3, coolKm: 1 } }, 5.37, {});
+  check("Fondo con km fijados por el coach (3 + 18 + 1)", /^- Warm-up.* 3km/m.test(fondoFijado) && /^- Bloque principal.* 18km/m.test(fondoFijado) && /^- Cool-down.* 1km/m.test(fondoFijado), fondoFijado);
   const conAlertas = IC.sesionATexto(series, 6.5, { alertas: true });
   check("Con alertas, el rango de ritmo sigue en la repetición", /^- Repetición .*\/km Pace intensity=active$/m.test(conAlertas), conAlertas);
 }
